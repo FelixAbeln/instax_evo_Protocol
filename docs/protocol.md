@@ -25,15 +25,17 @@ Both profiles share the **same GATT service and characteristic UUIDs** but speak
 
 ## Confirmed Camera Models
 
-| Model | Gen | BLE IOS address | BLE Android address | Film | Shots remaining (captured) |
-|---|---|---|---|---|---|
-| Instax Mini Evo | 1 | `FA:AB:BC:11:6F:D2` | `E0:48:24:D7:CF:2E` | Instax Mini | 1 |
-| Instax Evo Wide ("FI028") | 2 | `FA:AB:BC:1D:0A:7B` | — | Instax Wide | 4 |
-| Instax Mini Evo Cinema | 3 | unknown (not captured) | — | Instax Mini | — |
+| Model | Model ID | Gen | BLE IOS address | BLE Android address | Film | Shots remaining |
+|---|---|---|---|---|---|---|
+| Instax Mini Evo | **FI019** | 1 | `FA:AB:BC:11:6F:D2` | `E0:48:24:D7:CF:2E` | Instax Mini (600×800) | 1 ✓ live |
+| Instax Evo Wide | **FI028** | 2 | `FA:AB:BC:1D:0A:7B` | — | Instax Wide (1260×840) | 4 ✓ HCI log |
+| Instax Mini Evo Cinema | unknown | 3 | unknown (not captured) | — | Instax Mini | — |
 
 Notes:
 - Gen 1 BR/EDR address `88:B4:36:11:6F:D2` is a Fujifilm-OUI classic Bluetooth address — **not BLE**.
-- The Evo Wide model ID "FI028" is returned by `DEVICE_INFO_SERVICE` op=(0x00,0x01) payload=0x02.
+- Model IDs from `DEVICE_INFO_SERVICE` op=(0x00,0x01) InfoType=1: FI019 (Mini Evo), FI028 (Evo Wide).
+- BLE device name suffix = serial number: `INSTAX-3332137670 (IOS)` serial = "3332137670".
+- Gen 1 **requires passkey/PIN pairing** after firmware update (even on IOS profile). Call `pair()` before subscribing.
 - Gen 3 (Mini Evo Cinema) is not in our possession; assumed to use the same Link protocol.
 
 ---
@@ -240,22 +242,50 @@ pkt = create_packet(0x00, 0x02, b'\x02')      # SUPPORT_FUNCTION_INFO PRINTER_FU
 ### Parsing status responses
 
 All responses use the same framing: `61 42 [len:2B_BE] [op1] [op2] [payload...] [checksum]`.
-Payload starts at byte offset 6.
+Payload starts at byte offset 6 (`response[6:]`).
+
+**Payload prefix:** `SUPPORT_FUNCTION_INFO` and `DEVICE_INFO_SERVICE` responses include a
+2-byte prefix before the actual data: `[0x00][InfoType_echo]`. Actual data starts at `payload[2]`
+(= `response[8]`), which is exactly what javl indexes as `packet[8:]`.
 
 **Battery (`SUPPORT_FUNCTION_INFO` + `BATTERY_INFO`):**
 
 ```python
-battery_state, battery_pct = struct.unpack_from('>BB', response, 6)
-# battery_state: 0=critical, 1=low, 2=medium, 3=high, 4=full (range may vary by model)
+# response[6] = 0x00, response[7] = 0x01 (InfoType echo)
+battery_state, battery_pct = struct.unpack_from('>BB', response, 8)
+# battery_state: 0=critical, 1=low, 2=medium, 3=high, 4=full
 # battery_pct: 0–100
+# Live example (Gen 1, after firmware update): state=3 (HIGH), pct=32
 ```
 
 **Photos left (`SUPPORT_FUNCTION_INFO` + `PRINTER_FUNCTION_INFO`):**
 
 ```python
-status_byte = response[6]
+# response[6] = 0x00, response[7] = 0x02 (InfoType echo)
+status_byte = response[8]
 photos_left = status_byte & 0x0F    # low 4 bits (max 10 for a standard pack)
 is_charging = bool(status_byte & 0x80)
+# Live example (Gen 1): status_byte=0x31, photos_left=1 ✓
+```
+
+**Image size (`SUPPORT_FUNCTION_INFO` + `IMAGE_SUPPORT_INFO`):**
+
+```python
+# response[6] = 0x00, response[7] = 0x00 (InfoType echo)
+width, height = struct.unpack_from('>HH', response, 8)
+# Gen 1 Mini Evo: 600×800; Gen 2 Evo Wide: 1260×840
+```
+
+**Device strings (`DEVICE_INFO_SERVICE`):**
+
+```python
+# response payload: [0x00][InfoType][str_len][str_bytes...]
+# InfoType 0 → Manufacturer ("FUJIFILM")
+# InfoType 1 → Model ID    ("FI019" Mini Evo, "FI028" Evo Wide)
+# InfoType 2 → Serial      ("3332137670" — same as BLE name suffix)
+# InfoType 3 → "0000"
+str_len = response[8]
+text = response[9:9 + str_len].decode('ascii')
 ```
 
 ---
@@ -354,12 +384,17 @@ Sequence counter is global across BLE connection sessions.
 
 ---
 
-## Known Film Counts (captured)
+## Known Film Counts (confirmed)
 
 | Camera | Film remaining | Source |
 |---|---|---|
-| Gen 1 Mini Evo | 1 shot | Android protocol `16 02` response |
-| Gen 2 Evo Wide | 4 shots | `CAMERA_LOG_SUBTOTAL_START` response uint32 LE at payload[4:8] |
+| Gen 1 Mini Evo (FI019) | 1 shot | `PRINTER_FUNCTION_INFO` response[8] & 0x0F = 1 ✓ live |
+| Gen 1 Mini Evo (FI019) | 1 shot | Android protocol `16 02` response byte[2] (cross-check) |
+| Gen 2 Evo Wide (FI028) | 4 shots | `PRINTER_FUNCTION_INFO` response[8] & 0x0F (HCI log, inferred) |
+
+> `CAMERA_LOG_SUBTOTAL_START` (op=0x84,0x00) returns **lifetime shot counts**, not remaining shots.
+> Live: Gen 1 returned 148 (total shots taken over camera lifetime).
+> Use `PRINTER_FUNCTION_INFO` for shots remaining.
 
 ---
 
@@ -375,11 +410,189 @@ Sequence counter is global across BLE connection sessions.
 
 ## Connection Notes
 
-- **IOS profile does not require BLE pairing.** Do not call `pair()` — it will cause a stale-bond disconnect on Windows.
+- **IOS profile requires passkey/PIN pairing** (at least on Gen 1 after firmware update). The user must pair once via Windows Bluetooth settings (a 6-digit code appears on screen or in the app).
+- After pairing, call `client.pair()` in bleak before subscribing — this re-establishes the encrypted session for the current connection. Without it, CCCD writes fail with "Operation aborted".
+- `pair()` returns `None` when already bonded (correct — the encrypted session is still established).
+- If the camera's firmware was updated, its bond database is wiped. Remove the INSTAX entry from Windows Bluetooth settings and re-pair.
 - Android profile requires pairing + DEVICE_ID auth. Not used by this project.
-- If Windows shows a stale bond for an INSTAX device, remove it in Settings → Bluetooth & devices, then reconnect.
 - javl's device scanner: `foundName.startswith('INSTAX-') and foundName.endswith('(IOS)')`
-- The gen 2 Evo Wide IOS profile name is `INSTAX-1D0A7B (IOS)` (last 3 bytes of BLE address).
+- BLE device name format: `INSTAX-[serial] (IOS)` where serial matches `DEVICE_INFO_SERVICE` InfoType=2.
+- The gen 2 Evo Wide IOS profile name is `INSTAX-[serial] (IOS)` (serial from DIS, not address-derived).
+
+---
+
+## End-to-End Print Pipeline (confirmed working — Gen 1 Mini Evo)
+
+The following sequence was reverse-engineered from official app BLE captures and
+validated by a successful physical print (film ejected, image visible). All packets
+use the [Link protocol framing](#link-protocol-ios-profile--all-models).
+
+### Step 1 — Connect and identify
+
+```
+Enable CCCD on notify char (70954784-...)
+op=(0x00,0x00)  []                    SUPPORT_FUNCTION_AND_VERSION_INFO (hello)
+op=(0x00,0x01)  [0x00]                IMAGE_SUPPORT_INFO → (width, height)
+op=(0x00,0x01)  [0x01]                → "FUJIFILM"
+op=(0x00,0x01)  [0x02]                → model ID ("FI019")
+op=(0x00,0x01)  [0x03]                → serial number
+op=(0x00,0x02)  [0x01]                BATTERY_INFO      → (state, pct)
+op=(0x00,0x02)  [0x02]                PRINTER_FUNCTION_INFO → photos_left
+```
+
+### Step 2 — Send image data
+
+```
+op=(0x10,0x00)  [img_size: 4B BE]     PRINT_IMAGE_DOWNLOAD_START
+    → camera ACKs with (0x10,0x00) response
+
+for each chunk (0-based sequence number, 900 bytes each, last zero-padded):
+    op=(0x10,0x01)  [seq: 4B BE] [900 bytes]  PRINT_IMAGE_DOWNLOAD_DATA
+    → camera ACKs with (0x10,0x01) [seq: 4B BE]
+
+op=(0x10,0x02)  []                    PRINT_IMAGE_DOWNLOAD_END
+    → camera ACKs with (0x10,0x02)
+```
+
+- Image size = exact JPEG byte count (no header/prefix)
+- Chunks are always 904 bytes in payload: 4-byte sequence + 900 bytes of data
+- Last chunk is zero-padded to 900 bytes
+- Each chunk is ACKed before the next is sent (no pipelining)
+- Seq 0 = first chunk; `ceil(img_size / 900)` chunks total
+
+### Step 3 — Trigger print
+
+```
+op=(0x10,0x80)  []                    PRINT_IMAGE  ← film ejects here
+    → camera responds: (0x10,0x80) payload=[0x00, 0x0C]
+    0x0C = 12 → confirmed "print initiated" status code
+```
+
+### Step 4 — Post-print status check
+
+```
+op=(0x00,0x02)  [0x02]                PRINTER_FUNCTION_INFO → photos_left (now decremented)
+```
+
+### Confirmed packet sizes
+
+| Step | Payload | Total packet |
+|---|---|---|
+| DOWNLOAD_START | 4 bytes | 11 B |
+| DOWNLOAD_DATA chunk | 904 bytes | 911 B (BLE-fragmented across writes) |
+| DOWNLOAD_END | 0 bytes | 7 B |
+| PRINT_IMAGE | 0 bytes | 7 B |
+
+### Key ACK packet examples (actual bytes on wire)
+
+```
+DOWNLOAD_START ack:   61 42 00 08 10 00 00 [cs]      (8 bytes)
+DOWNLOAD_DATA  ack:   61 42 00 0B 10 01 [seq 4B] [cs] (11 bytes)
+DOWNLOAD_END   ack:   61 42 00 08 10 02 00 [cs]      (8 bytes)
+PRINT_IMAGE    ack:   61 42 00 09 10 80 00 0C [cs]   (9 bytes)
+```
+
+---
+
+## Image Preparation (client-side)
+
+The Instax Mini Evo does **not** apply any image processing filters on-device.
+All effects are applied on the phone (or in our Python tool) before transmission.
+
+### Required image format
+
+| Property | Value |
+|---|---|
+| Width × Height | **600 × 800 px** (portrait) |
+| Color mode | RGB |
+| File format | JPEG |
+| Target size | **94.5 – 105 KB** (binary-search quality) |
+| Max quality | 95 (prevents quality=100 inflated files) |
+
+The 600×800 dimensions are returned by `IMAGE_SUPPORT_INFO` (`op=(0x00,0x01)` InfoType=0x00).
+The size ceiling (105 KB) was determined empirically to fit camera buffer constraints.
+
+### Resize behaviour
+
+Input images are scaled to fit 600×800 with `LANCZOS` resampling, then center-cropped
+(or letterboxed by PIL's `thumbnail` default). Portrait images fill the frame; landscape
+images are letterboxed top/bottom.
+
+### Image modes ("filters")
+
+These are **client-side PIL operations** applied before JPEG encode; the camera
+receives only the processed pixel data.
+
+| Mode | Implementation | Effect |
+|---|---|---|
+| **Normal** | No change | Native colours |
+| **Rich** | `ImageEnhance.Color(img).enhance(1.5)` | Saturation ×1.5 — vivid, punchy colours |
+
+> The "Rich" name matches the Instax app's filter name. Other official app filters
+> (Fade, Mono, Sepia, etc.) can be approximated with standard PIL operations.
+> None of these require any additional BLE command — the camera is always in "raw
+> receive" mode for image data.
+
+---
+
+## Known Gaps — Commands Not Yet Identified
+
+### Print history / transferred-images gallery
+
+**Symptom:** After a successful print, the image does not appear in the camera's
+internal "printed images" list (visible in the Instax app's history view and on-device
+gallery).
+
+**Hypothesis:** The official app sends one or more additional BLE commands — either
+alongside or after the print sequence — to register the image in the camera's history
+log. The opcode(s) are not yet known.
+
+**Candidates:**
+
+| Candidate | Reasoning |
+|---|---|
+| `CAMERA_LOG_SUBTOTAL_START` (0x84,0x00) | Already used for film-remaining; may have a write variant |
+| `CAMERA_SETTINGS` (0x80,0x00) with metadata payload | Writes a setting/config; could include image reference |
+| Unknown opcode in 0x84 family (0x84,0x03 `CAMERA_LOG_DATE_START`) | Date-tagged log entry for each print |
+| `SUPPORT_FUNCTION_INFO` InfoType 0x03 `PRINT_HISTORY_INFO` | Query — but write equivalent may register entry |
+| Unknown opcode not yet observed | E.g. 0x84,0x04 / 0x84,0x05 / 0x90,0x00 |
+
+**Next step:** Capture a full print session from the official Instax iOS app
+(Android bugreport HCI log) and diff the BLE write sequence against our implementation.
+Focus on any `op=(0x84,xx)` or `op=(0x80,xx)` writes that our tool does not send.
+
+See [captures/README.md](../captures/README.md) for how to collect a bugreport capture.
+
+---
+
+## Local Print Log
+
+Every `evo-print` run appends a record to `captures/print-log.jsonl`:
+
+```json
+{
+  "t": 1747397000.0,
+  "image": "F:\\path\\to\\image.jpg",
+  "camera": "FA:AB:BC:11:6F:D2",
+  "model": "FI019",
+  "transferred": true,
+  "printed": false,
+  "photos_left_after": 1
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `t` | Unix timestamp of the operation |
+| `image` | Absolute path to the source image file |
+| `camera` | BLE address of the camera (IOS profile) |
+| `model` | Model ID from `DEVICE_INFO_SERVICE` (e.g. `"FI019"`) |
+| `transferred` | `true` if image data was fully sent to camera |
+| `printed` | `true` if `PRINT_IMAGE` (0x10,0x80) was also sent (film ejected) |
+| `photos_left_after` | `photos_left` value from post-print status poll |
+
+`transferred=true, printed=false` means `--enable-print` was not passed — image was
+sent but film was not ejected (safe test mode).
 
 ---
 

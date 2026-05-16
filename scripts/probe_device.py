@@ -107,43 +107,52 @@ async def run_probe_ios(client: "BleakClient", responses: list):
 
         if "error" in dec:
             print(f"      *** decode error: {dec['error']}")
+            responses.append((op, payload, data))
             return
 
-        # Battery: op=(0x00, 0x02) + payload starts with InfoType = 1
-        if op == (0x00, 0x02) and len(payload) >= 2:
-            # Check if this looks like a battery response (javl: payload[0]=infoType echo?)
-            # Try both interpretations: with and without infoType echo byte
-            state, pct = payload[0], payload[1]
-            if 0 <= state <= 4 and 0 <= pct <= 100:
+        # Response payload format for SUPPORT_FUNCTION_INFO and DEVICE_INFO_SERVICE:
+        #   [0x00] [InfoType_echo: 1B] [actual_data...]
+        # This matches javl's packet[8:10] indexing (raw bytes 8-9 = payload bytes 2-3).
+        info_type = payload[1] if len(payload) >= 2 else -1
+        data_payload = payload[2:] if len(payload) >= 2 else b''
+
+        # SUPPORT_FUNCTION_INFO (op=0x00, 0x02)
+        if op == (0x00, 0x02):
+            if info_type == 0x01 and len(data_payload) >= 2:  # BATTERY_INFO
+                state, pct = data_payload[0], data_payload[1]
                 level = {0: "CRITICAL", 1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "FULL"}.get(state, f"?({state})")
                 print(f"      *** BATTERY state={state} ({level}), pct={pct}%")
+            elif info_type == 0x02 and len(data_payload) >= 1:  # PRINTER_FUNCTION_INFO
+                status = data_payload[0]
+                photos = status & 0x0F
+                charging = bool(status & 0x80)
+                print(f"      *** PRINTER: photos_left={photos}, charging={charging}")
+            elif info_type == 0x00 and len(data_payload) >= 4:  # IMAGE_SUPPORT_INFO
+                w, h = struct.unpack_from('>HH', data_payload, 0)
+                print(f"      *** IMAGE_SUPPORT: {w}x{h}")
             else:
-                # Might be IMAGE_SUPPORT_INFO response (w×h)
-                w, h = struct.unpack_from('>HH', payload, 0) if len(payload) >= 4 else (0, 0)
-                print(f"      *** IMAGE_SUPPORT: {w}x{h} (or unknown op=0x02 payload)")
+                print(f"      *** SUPPORT_FUNCTION_INFO InfoType={info_type:#04x}: {data_payload.hex()}")
 
-        # Photos left: op=(0x00, 0x02) or (0x00, 0x01), PRINTER_FUNCTION_INFO
-        elif op in ((0x00, 0x01), (0x00, 0x02)) and len(payload) >= 1:
-            status = payload[0]
-            photos = status & 0x0F
-            charging = bool(status & 0x80)
-            print(f"      *** PRINTER: photos_left={photos}, charging={charging}")
-
-        # Device info: op=(0x00, 0x01)
+        # DEVICE_INFO_SERVICE (op=0x00, 0x01) — payload: [00][InfoType][length][text]
         elif op == (0x00, 0x01):
-            try:
-                text = payload.decode("ascii", errors="replace")
-                print(f"      *** DEVICE_INFO: {text!r}")
-            except Exception:
-                pass
+            names = {0: "Manufacturer", 1: "Model", 2: "Serial", 3: "Field3",
+                     4: "Field4", 5: "Field5", 9: "Field9", 10: "Field10"}
+            label = names.get(info_type, f"InfoType={info_type}")
+            if len(data_payload) >= 1:
+                str_len = data_payload[0]
+                text = data_payload[1:1 + str_len].decode("ascii", errors="replace")
+                print(f"      *** DEVICE_INFO {label}: {text!r}")
 
-        # Film remaining: op=(0x84, 0x00) — CAMERA_LOG_SUBTOTAL_START
-        elif op == (0x84, 0x00) and len(payload) >= 8:
+        # Film log: op=(0x84, 0x00) — CAMERA_LOG_SUBTOTAL_START
+        # Returns lifetime shot counts, NOT remaining shots.
+        # Use PRINTER_FUNCTION_INFO (0x00,0x02 InfoType=2) for shots remaining.
+        elif op == (0x84, 0x00) and len(payload) >= 12:
             a = struct.unpack_from('<I', payload, 0)[0]
             b = struct.unpack_from('<I', payload, 4)[0]
-            print(f"      *** FILM_REMAINING: uint32[0]={a}, uint32[1]={b} (shots left)")
+            c = struct.unpack_from('<I', payload, 8)[0]
+            print(f"      *** CAMERA_LOG: val[0]={a} val[1]={b} val[2]={c} (lifetime counts)")
 
-        # Firmware: op=(0x20, 0x10)
+        # Firmware version: op=(0x20, 0x10)
         elif op == (0x20, 0x10):
             print(f"      *** FW_INFO: {payload.hex()}")
 
@@ -168,7 +177,17 @@ async def run_probe_ios(client: "BleakClient", responses: list):
     print(f"\nWrite char:  h=0x{wc.handle:04X}  {wc.uuid[:8]}")
     print(f"Notify char: h=0x{nc.handle:04X}  {nc.uuid[:8]}")
 
-    # Subscribe — no pairing needed for IOS profile
+    # Establish encrypted session — required if camera uses authenticated pairing.
+    # pair() is safe to call even when already bonded; it triggers the security handshake.
+    print("Pairing / establishing encrypted session ...")
+    try:
+        result = await client.pair()
+        print(f"  pair() → {result!r}  (True=fresh, False=failed, None=already bonded)")
+    except Exception as e:
+        print(f"  pair() exception: {e} — continuing anyway")
+    await asyncio.sleep(1.0)
+
+    # Subscribe to notify char
     try:
         await asyncio.wait_for(client.start_notify(nc.uuid, on_notify), timeout=5.0)
         print(f"Subscribed to h=0x{nc.handle:04X}")
@@ -176,7 +195,9 @@ async def run_probe_ios(client: "BleakClient", responses: list):
         print(f"Subscribe timed out — continuing anyway")
     except Exception as e:
         print(f"Subscribe failed: {e}")
-        return
+        if "not connected" in str(e).lower() or "aborted" in str(e).lower():
+            print("  Camera disconnected during subscribe — check pairing in Windows BT settings.")
+            return
 
     async def wr(op1: int, op2: int, payload: bytes = b'', label: str = ""):
         pkt = create_packet(op1, op2, payload)

@@ -1,6 +1,6 @@
 
 
-from .evo_protocol import EvoProtocol
+from .evo_protocol import InstaxCamera
 
 import asyncio
 import json
@@ -79,142 +79,132 @@ def _extract_btsnoop_from_zip(zip_path: Path, out_dir: Path) -> list[Path]:
 @app.command()
 def evo_connect(
     address: Optional[str] = typer.Option(None, help="Device address (default: auto-scan)"),
-    verbose: bool = typer.Option(False, help="Enable verbose output"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
 ):
+    """Connect to an Instax camera, dump its GATT layout, and disconnect."""
     asyncio.run(_evo_connect(address, verbose))
 
 
 async def _evo_connect(address: Optional[str], verbose: bool):
-    """Connect and discover Evo device"""
-    proto = EvoProtocol(device_address=address, verbose=verbose)
-    
+    cam = InstaxCamera(address=address, verbose=verbose)
     try:
-        # Scan and connect
-        if not await proto.scan_for_device():
-            raise typer.Exit(code=1)
-        
-        if not await proto.connect():
-            raise typer.Exit(code=1)
-        
-        # Discover services and characteristics
-        if not await proto.discover_services():
-            console.print("[yellow]Warning: Could not discover services[/yellow]")
-        
-        console.print("\n[bold green]✓ Connected and ready[/bold green]")
-        console.print(f"[cyan]Address: {proto.device_address}[/cyan]")
-        console.print(f"[cyan]MTU: {proto.client.mtu_size}[/cyan]")
-        
+        await cam.connect()
+        console.print(f"[bold green]Connected[/bold green]  address={cam.address}  MTU={cam._client.mtu_size}")
+        table = Table(title="GATT layout")
+        table.add_column("Handle", style="green")
+        table.add_column("UUID", style="yellow")
+        table.add_column("Properties", style="cyan")
+        for svc in cam._client.services:
+            for char in svc.characteristics:
+                table.add_row(str(char.handle), char.uuid, ", ".join(char.properties))
+        console.print(table)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
     finally:
-        await proto.disconnect()
-
+        await cam.disconnect()
 
 
 @app.command()
 def evo_status(
     address: Optional[str] = typer.Option(None, help="Device address (default: auto-scan)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
-    """Read image count and battery level from Instax Evo device."""
-    asyncio.run(_evo_status(address))
+    """Read battery level and film remaining from an Instax camera."""
+    asyncio.run(_evo_status(address, verbose))
 
 
-async def _evo_status(address: Optional[str]):
-    proto = EvoProtocol(device_address=address, verbose=True)
+async def _evo_status(address: Optional[str], verbose: bool):
+    _BATTERY_LABEL = {0: "CRITICAL", 1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "FULL"}
+    cam = InstaxCamera(address=address, verbose=verbose)
     try:
-        if not await proto.scan_for_device(timeout=5):
-            raise typer.Exit(code=1)
-        if not await proto.connect():
-            raise typer.Exit(code=1)
-
-        console.print("\n[bold cyan]Reading device status...[/bold cyan]")
-        console.print("[dim]Discovering GATT services...[/dim]")
-        await proto.discover_services()
-
-        console.print("[dim]Polling device for status...[/dim]")
-
-        # Status packets arrive during/after GATT discovery phase
-        # Subscribe first, then discover services to trigger them
-        status = await proto.read_device_status(timeout=8.0)
-
-        battery = status.get("battery_pips", -1)
-        img_count = status.get("images_queued", -1)
-        all_pkts = status.get("all_packets", [])
-
-        console.print(f"\n  Received {len(all_pkts)} notification packets")
-
-        if battery >= 0:
-            bar = "pip" if battery == 1 else "pips"
-            label = "full" if battery == 3 else "partial" if battery > 0 else "low/empty"
-            console.print(f"  [green]Battery:[/green] {battery} {bar} ({label})")
-        else:
-            console.print("  [yellow]Battery: not received[/yellow]")
-
-        if img_count >= 0:
-            console.print(f"  [green]Images queued:[/green] {img_count}")
-        else:
-            console.print("  [yellow]Image count: not received[/yellow]")
-
-        if all_pkts:
-            console.print("\n  [dim]All decoded packets:[/dim]")
-            for p in all_pkts[:10]:
-                console.print(f"    {p}")
-
+        await cam.connect()
+        console.print(f"Connected to [bold]{cam.address}[/bold]  MTU={cam._client.mtu_size}")
+        status = await cam.get_status()
+        console.print()
+        console.print(f"  Model:        [cyan]{status['model']}[/cyan] ({status['manufacturer']})")
+        console.print(f"  Serial:       {status['serial']}")
+        console.print(f"  Film size:    {status['image_size'][0]}×{status['image_size'][1]} px")
+        bat_label = _BATTERY_LABEL.get(status['battery_state'], f"state={status['battery_state']}")
+        console.print(f"  Battery:      [green]{status['battery_pct']}%[/green] ({bat_label})")
+        photos = status['photos_left']
+        color = "green" if photos > 3 else "yellow" if photos > 0 else "red"
+        console.print(f"  Photos left:  [{color}]{photos}[/{color}]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
     finally:
-        await proto.disconnect()
+        await cam.disconnect()
 
 
 @app.command()
-def evo_query(
+def evo_print(
+    image: Path = typer.Argument(..., help="Path to the image to print"),
     address: Optional[str] = typer.Option(None, help="Device address (default: auto-scan)"),
-    hex_data: Optional[str] = typer.Option(None, help="Hex-encoded command to send (e.g., A8010002FF)"),
-    listen: float = typer.Option(2.0, help="Listen for responses for N seconds"),
+    enable_print: bool = typer.Option(False, "--enable-print", help="Actually trigger the print (eject film)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
-    """Send a query command to Instax Evo and listen for response."""
-    asyncio.run(_evo_query(address, hex_data, listen))
+    """Send an image to the Instax camera.
+
+    By default only sends the image data (safe for testing).
+    Pass --enable-print to physically eject and print the image.
+    """
+    asyncio.run(_evo_print(image, address, enable_print, verbose))
 
 
-async def _evo_query(address: Optional[str], hex_data: Optional[str], listen: float):
-    """Send command and listen for response"""
-    proto = EvoProtocol(device_address=address, verbose=True)
-    
+async def _evo_print(image: Path, address: Optional[str], enable_print: bool, verbose: bool):
+    if not image.exists():
+        console.print(f"[red]File not found: {image}[/red]")
+        raise typer.Exit(code=1)
+
+    cam = InstaxCamera(address=address, verbose=verbose)
     try:
-        # Scan and connect
-        if not await proto.scan_for_device(timeout=5):
+        await cam.connect()
+        console.print(f"Connected to [bold]{cam.address}[/bold]")
+
+        console.print("Reading camera status ...")
+        status = await cam.get_status()
+        console.print(
+            f"  {status['model']}  battery={status['battery_pct']}%  "
+            f"photos_left={status['photos_left']}  "
+            f"film={status['image_size'][0]}×{status['image_size'][1]}"
+        )
+
+        if status["photos_left"] == 0:
+            console.print("[red]No photos left — load a new film pack[/red]")
             raise typer.Exit(code=1)
-        
-        if not await proto.connect():
-            raise typer.Exit(code=1)
-        
-        # Setup notifications before sending command
-        console.print("\n[bold cyan]Setting up notifications...[/bold cyan]")
-        await proto.setup_notifications()
-        
-        # Send command if provided
-        if hex_data:
-            try:
-                cmd = bytes.fromhex(hex_data)
-                console.print(f"\n[bold cyan]Sending command:[/bold cyan]")
-                await proto.send_command(cmd)
-            except ValueError:
-                console.print(f"[red]Invalid hex data: {hex_data}[/red]")
-                raise typer.Exit(code=1)
+
+        action = "[bold red]PRINTING[/bold red]" if enable_print else "[yellow]sending data only (--enable-print not set)[/yellow]"
+        console.print(f"\nSending image {image.name} ... {action}")
+
+        await cam.print_image(image, enable_print=enable_print)
+
+        if enable_print:
+            console.print(f"[bold green]Print triggered![/bold green]  photos_left now={cam.photos_left}")
         else:
-            console.print(f"\n[bold cyan]No command specified. Listening for {listen}s...[/bold cyan]")
-        
-        # Listen for responses
-        console.print(f"[cyan]Listening for responses ({listen}s)...[/cyan]\n")
-        await asyncio.sleep(listen)
-        
+            console.print("[green]Image data sent successfully[/green] (no ejection)")
+
+        # Append to print log
+        log_path = Path("captures/print-log.jsonl")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "t": time.time(),
+            "image": str(image.resolve()),
+            "camera": cam.address,
+            "model": status["model"],
+            "transferred": True,
+            "printed": enable_print,
+            "photos_left_after": cam.photos_left,
+        }
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+        console.print(f"Logged to [dim]{log_path}[/dim]")
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
     finally:
-        await proto.disconnect()
+        await cam.disconnect()
 
 @app.command()
 def scan(timeout: float = typer.Option(10.0, help="Scan duration in seconds")):

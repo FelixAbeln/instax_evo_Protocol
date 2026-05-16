@@ -1,14 +1,380 @@
 """
-Instax Evo BLE Protocol Handler
+Instax Link protocol client — IOS BLE profile.
 
-Based on protocol analysis from Android HCI snoop logs.
-Service UUIDs: 70954782-2d83-473d-9e5f-81e1d02d5273 (and variants)
+Works for all known camera generations (tested Gen 1 FI019, Gen 2 FI028):
+  - Connects to IOS BLE profile (device name ends with "(IOS)")
+  - Requires passkey/PIN pairing from the camera's Bluetooth menu before first use
+  - Call client.pair() each session to re-establish the encrypted link
 
-Key characteristics:
-- 0x0020 (0x1849): Write command channel for image data
-- 0x001D (0x1849): Status notifications and device state
-- 0x0027 (0x1849): Secondary notify channel
+Print sequence (javl/InstaxBLE compatible):
+  PRINT_IMAGE_DOWNLOAD_START (0x10,0x00): payload = 02 00 00 00 + image_len BE
+  × N  PRINT_IMAGE_DOWNLOAD_DATA (0x10,0x01): payload = index BE + chunk (zero-padded)
+  PRINT_IMAGE_DOWNLOAD_END   (0x10,0x02): no payload
+  PRINT_IMAGE                (0x10,0x80): triggers ejection (only when enable_print=True)
 """
+
+import asyncio
+import struct
+from io import BytesIO
+from math import ceil
+from pathlib import Path
+from typing import Optional, Union
+
+from bleak import BleakClient, BleakScanner
+from PIL import Image
+
+# Instax Link GATT UUIDs (shared across all models and both BLE profiles)
+SERVICE_UUID = "70954782-2d83-473d-9e5f-81e1d02d5273"
+WRITE_UUID   = "70954783-2d83-473d-9e5f-81e1d02d5273"
+NOTIFY_UUID  = "70954784-2d83-473d-9e5f-81e1d02d5273"
+
+# Image dimensions → JPEG chunk size (bytes per PRINT_IMAGE_DOWNLOAD_DATA packet)
+FILM_DIMS: dict[tuple[int, int], int] = {
+    (600,  800):  900,   # Instax Mini  (FI019 Mini Evo, Mini Link, ...)
+    (800,  800): 1808,   # Instax Square
+    (1260, 840):  900,   # Instax Wide  (FI028 Evo Wide, Wide Link, ...)
+}
+MAX_IMAGE_BYTES = 105 * 1024   # 105 KB max JPEG size
+BLE_WRITE_CHUNK = 182          # max bytes per BLE write-without-response
+
+
+# ---------------------------------------------------------------------------
+# Packet helpers (module-level so probe scripts can import them)
+# ---------------------------------------------------------------------------
+
+def create_packet(op1: int, op2: int, payload: bytes = b'') -> bytes:
+    """Build an Instax Link protocol request packet.
+
+    Format: [41 62] [total_len: uint16 BE] [op1] [op2] [payload...] [checksum]
+    checksum = (255 - sum(preceding_bytes)) & 255
+    """
+    header = b'\x41\x62'
+    length = struct.pack('>H', 7 + len(payload))
+    body   = header + length + bytes([op1, op2]) + payload
+    cs     = (255 - (sum(body) & 255)) & 255
+    return body + bytes([cs])
+
+
+def validate_checksum(packet: bytes) -> bool:
+    return (sum(packet) & 255) == 255
+
+
+def decode_response(raw: bytes) -> dict:
+    """Decode a Link protocol response notification.
+
+    Returns dict with keys: op (tuple), payload (bytes), error (bool).
+    Response payload format for SUPPORT_FUNCTION_INFO and DEVICE_INFO_SERVICE:
+      [0x00][InfoType_echo][actual_data...]  — actual data starts at payload[2] = raw[8]
+    """
+    if len(raw) < 7 or raw[:2] != b'\x61\x42':
+        return {"error": True, "raw": raw.hex()}
+    if not validate_checksum(raw):
+        return {"error": True, "raw": raw.hex(), "reason": "bad checksum"}
+    total_len = struct.unpack_from('>H', raw, 2)[0]
+    op1, op2  = raw[4], raw[5]
+    payload   = raw[6:total_len - 1]
+    return {"op": (op1, op2), "payload": payload, "error": False}
+
+
+# ---------------------------------------------------------------------------
+# Camera client
+# ---------------------------------------------------------------------------
+
+class InstaxCamera:
+    """Instax Link protocol camera client (IOS BLE profile).
+
+    Usage::
+
+        async with InstaxCamera() as cam:
+            status = await cam.get_status()
+            print(status)
+            await cam.print_image("photo.jpg", enable_print=True)
+    """
+
+    def __init__(self, address: Optional[str] = None, verbose: bool = False):
+        self.address  = address
+        self.verbose  = verbose
+        self._client: Optional[BleakClient] = None
+        self._rx_queue: asyncio.Queue = asyncio.Queue()
+
+        # Populated by get_status()
+        self.manufacturer  = ""
+        self.model         = ""
+        self.serial        = ""
+        self.image_size    = (0, 0)   # (width, height) in pixels
+        self.battery_state = -1       # 0=critical … 4=full
+        self.battery_pct   = -1       # 0–100
+        self.photos_left   = -1       # 0–10
+
+    @property
+    def chunk_size(self) -> int:
+        """JPEG chunk size for PRINT_IMAGE_DOWNLOAD_DATA packets."""
+        return FILM_DIMS.get(self.image_size, 900)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _log(self, msg: str):
+        if self.verbose:
+            print(f"[instax] {msg}")
+
+    def _notification_handler(self, sender, data: bytearray):
+        data = bytes(data)
+        self._log(f"  <-- [{len(data)}B] {data.hex()}")
+        self._rx_queue.put_nowait(data)
+
+    async def _recv(self, timeout: float = 5.0) -> bytes:
+        return await asyncio.wait_for(self._rx_queue.get(), timeout=timeout)
+
+    async def _send(self, packet: bytes):
+        """Send a packet, splitting into ≤182-byte BLE writes."""
+        for off in range(0, len(packet), BLE_WRITE_CHUNK):
+            await self._client.write_gatt_char(
+                WRITE_UUID, bytearray(packet[off:off + BLE_WRITE_CHUNK]), response=False
+            )
+
+    async def _send_recv(
+        self, op1: int, op2: int, payload: bytes = b'', timeout: float = 5.0
+    ) -> dict:
+        """Send a Link packet and return the decoded response."""
+        pkt = create_packet(op1, op2, payload)
+        self._log(f"  --> op=({op1:#04x},{op2:#04x}) payload={payload.hex()!r} [{len(pkt)}B]")
+        await self._send(pkt)
+        raw = await self._recv(timeout)
+        return decode_response(raw)
+
+    # ------------------------------------------------------------------
+    # Connection / context manager
+    # ------------------------------------------------------------------
+
+    async def connect(self, scan_timeout: float = 30) -> None:
+        """Scan, connect, pair, and subscribe to notifications.
+
+        Raises on failure so callers can use try/except.
+        """
+        self._log("Scanning for INSTAX (IOS) device ...")
+        dev = await BleakScanner.find_device_by_filter(
+            lambda d, a: (
+                (self.address and d.address.upper() == self.address.upper())
+                or (not self.address
+                    and "INSTAX" in (d.name or "").upper()
+                    and "(IOS)" in (d.name or "").upper())
+            ),
+            timeout=scan_timeout,
+        )
+        if not dev:
+            raise RuntimeError("No INSTAX (IOS) device found within timeout")
+
+        self.address = dev.address
+        self._log(f"Found {dev.name!r} @ {dev.address}")
+
+        self._client = BleakClient(dev, timeout=30)
+        await self._client.connect()
+        self._log(f"Connected  MTU={self._client.mtu_size}")
+
+        # Establish encrypted session (required after firmware pairing)
+        try:
+            await self._client.pair()
+            self._log("Paired / encrypted session established")
+        except Exception as e:
+            self._log(f"pair() exception: {e} — continuing anyway")
+        await asyncio.sleep(0.5)
+
+        await self._client.start_notify(NOTIFY_UUID, self._notification_handler)
+        self._log("Subscribed to notify char")
+
+    async def disconnect(self):
+        if self._client:
+            try:
+                await self._client.disconnect()
+            except Exception:
+                pass
+            self._client = None
+
+    async def __aenter__(self):
+        await self.connect()
+        return self
+
+    async def __aexit__(self, *_):
+        await self.disconnect()
+
+    # ------------------------------------------------------------------
+    # Status
+    # ------------------------------------------------------------------
+
+    async def get_status(self) -> dict:
+        """Read device info, battery, and photos left.
+
+        Populates self.manufacturer, self.model, self.serial,
+        self.image_size, self.battery_state, self.battery_pct, self.photos_left.
+        Returns a dict with the same values.
+        """
+        # Hello / init
+        await self._send_recv(0x00, 0x00)
+
+        # Device strings: DEVICE_INFO_SERVICE (op=0x00,0x01)
+        # Response payload: [0x00][InfoType][str_len][str_bytes...]
+        for info_type, attr in [(0, "manufacturer"), (1, "model"), (2, "serial")]:
+            dec = await self._send_recv(0x00, 0x01, bytes([info_type]))
+            p = dec.get("payload", b"")
+            if len(p) >= 4:
+                str_len = p[2]
+                setattr(self, attr, p[3:3 + str_len].decode("ascii", errors="replace"))
+
+        # Image size: SUPPORT_FUNCTION_INFO (op=0x00,0x02) InfoType=0 (IMAGE_SUPPORT_INFO)
+        # Response payload: [0x00][0x00][width: 2B BE][height: 2B BE][...]
+        dec = await self._send_recv(0x00, 0x02, b'\x00')
+        p = dec.get("payload", b"")
+        if len(p) >= 6:
+            w, h = struct.unpack_from('>HH', p, 2)
+            self.image_size = (w, h)
+            if self.image_size not in FILM_DIMS:
+                self._log(f"WARNING: Unknown image size {self.image_size}")
+
+        # Battery: SUPPORT_FUNCTION_INFO InfoType=1 (BATTERY_INFO)
+        # Response payload: [0x00][0x01][state][pct][...]
+        dec = await self._send_recv(0x00, 0x02, b'\x01')
+        p = dec.get("payload", b"")
+        if len(p) >= 4:
+            self.battery_state = p[2]
+            self.battery_pct   = p[3]
+
+        # Photos left: SUPPORT_FUNCTION_INFO InfoType=2 (PRINTER_FUNCTION_INFO)
+        # Response payload: [0x00][0x02][status_byte][...]
+        # photos_left = status_byte & 0x0F, charging = status_byte & 0x80
+        dec = await self._send_recv(0x00, 0x02, b'\x02')
+        p = dec.get("payload", b"")
+        if len(p) >= 3:
+            self.photos_left = p[2] & 0x0F
+
+        return {
+            "manufacturer":  self.manufacturer,
+            "model":         self.model,
+            "serial":        self.serial,
+            "image_size":    self.image_size,
+            "battery_state": self.battery_state,
+            "battery_pct":   self.battery_pct,
+            "photos_left":   self.photos_left,
+        }
+
+    # ------------------------------------------------------------------
+    # Image preparation
+    # ------------------------------------------------------------------
+
+    def prepare_image(self, source: Union[str, Path, BytesIO]) -> bytearray:
+        """Resize and JPEG-encode an image for this camera's film size.
+
+        Requires get_status() to have been called first (to set self.image_size).
+        Returns a bytearray of JPEG data ≤ MAX_IMAGE_BYTES.
+        """
+        if self.image_size == (0, 0):
+            raise RuntimeError("Call get_status() first to determine film size")
+        w, h = self.image_size
+
+        if isinstance(source, (str, Path)):
+            img = Image.open(source)
+        elif isinstance(source, BytesIO):
+            source.seek(0)
+            img = Image.open(source)
+        else:
+            raise TypeError(f"Unsupported image source: {type(source)}")
+
+        if img.mode == "RGBA":
+            img = img.convert("RGB")
+        img = img.resize((w, h), Image.Resampling.LANCZOS)
+
+        # Binary-search JPEG quality to stay ≤ MAX_IMAGE_BYTES
+        buf = BytesIO()
+        lo, hi, quality = 1, 95, 75
+        while lo <= hi:
+            buf.seek(0); buf.truncate()
+            img.save(buf, format="JPEG", quality=quality)
+            size = buf.tell()
+            if size <= MAX_IMAGE_BYTES and size >= MAX_IMAGE_BYTES * 0.9:
+                break
+            if size > MAX_IMAGE_BYTES:
+                hi = quality - 1
+            else:
+                lo = quality + 1
+            quality = (lo + hi) // 2
+
+        self._log(f"Image prepared: {w}×{h} JPEG quality={quality} size={buf.tell()/1024:.1f}KB")
+        return bytearray(buf.getvalue())
+
+    # ------------------------------------------------------------------
+    # Print
+    # ------------------------------------------------------------------
+
+    async def print_image(
+        self,
+        source: Union[str, Path, BytesIO],
+        enable_print: bool = False,
+    ) -> None:
+        """Send image to the camera and optionally trigger printing.
+
+        Args:
+            source:       Path (str/Path) or BytesIO of the source image.
+            enable_print: If True, sends the final PRINT_IMAGE command to
+                          physically eject and print. Default False (safe: sends
+                          all data packets but does not trigger the print).
+
+        Raises:
+            RuntimeError: if no photos are left or get_status() was not called.
+        """
+        if self.photos_left == 0:
+            raise RuntimeError("No photos left in camera — load a new film pack")
+        if self.image_size == (0, 0):
+            raise RuntimeError("Call get_status() before print_image()")
+
+        img_data   = self.prepare_image(source)
+        chunk_size = self.chunk_size
+        n_chunks   = ceil(len(img_data) / chunk_size)
+        self._log(f"Print: {n_chunks} chunks × {chunk_size}B  total={len(img_data)}B")
+
+        # 1. PRINT_IMAGE_DOWNLOAD_START (0x10, 0x00)
+        #    payload: [02 00 00 00] [image_len: 4B BE]
+        payload_start = b'\x02\x00\x00\x00' + struct.pack('>I', len(img_data))
+        dec = await self._send_recv(0x10, 0x00, payload_start, timeout=10.0)
+        if dec.get("error"):
+            raise RuntimeError("No response to PRINT_IMAGE_DOWNLOAD_START")
+
+        # 2. PRINT_IMAGE_DOWNLOAD_DATA (0x10, 0x01) × n_chunks
+        #    payload: [chunk_index: 4B BE] [chunk: chunk_size B, zero-padded]
+        for idx in range(n_chunks):
+            chunk = img_data[idx * chunk_size:(idx + 1) * chunk_size]
+            chunk = bytes(chunk) + bytes(chunk_size - len(chunk))  # zero-pad
+            payload_data = struct.pack('>I', idx) + chunk
+            dec = await self._send_recv(0x10, 0x01, payload_data, timeout=10.0)
+            if dec.get("error"):
+                raise RuntimeError(f"No response to chunk {idx}/{n_chunks}")
+            if idx % 10 == 0:
+                self._log(f"  chunk {idx + 1}/{n_chunks}")
+
+        # 3. PRINT_IMAGE_DOWNLOAD_END (0x10, 0x02)
+        dec = await self._send_recv(0x10, 0x02, timeout=10.0)
+        if dec.get("error"):
+            raise RuntimeError("No response to PRINT_IMAGE_DOWNLOAD_END")
+
+        # 4. PRINT_IMAGE (0x10, 0x80) — physically ejects and prints
+        if enable_print:
+            self._log("Sending PRINT_IMAGE — camera will now print!")
+            dec = await self._send_recv(0x10, 0x80, timeout=15.0)
+            # Refresh photos_left after print
+            try:
+                dec2 = await self._send_recv(0x00, 0x02, b'\x02', timeout=5.0)
+                p = dec2.get("payload", b"")
+                if len(p) >= 3:
+                    self.photos_left = p[2] & 0x0F
+            except asyncio.TimeoutError:
+                pass
+        else:
+            self._log("Print data sent (enable_print=False — not triggering ejection)")
+
+
+# Backwards-compatible alias (cli.py imports this name)
+EvoProtocol = InstaxCamera
+
 
 import asyncio
 import struct
