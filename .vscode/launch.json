@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "instax-lab scan",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "instax_lab",
+      "args": [
+        "scan",
+        "--timeout",
+        "10"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}
