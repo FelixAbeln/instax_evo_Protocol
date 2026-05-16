@@ -1,11 +1,398 @@
-# instax mini Evo / Link BLE protocol notes
+# Instax Evo BLE Protocol Notes
 
-First-pass notes from Android bugreport capture analysis.
+Analysis of the BLE protocol used by the Instax camera/printer family.
+All findings derived from Android bugreport HCI captures cross-referenced with
+[javl/InstaxBLE](https://github.com/javl/InstaxBLE).
 
-Analyzed files:
+---
 
-- captures/extracted/bugreport-pa3qxeea-BP2A.250605.031.A3-2026-05-16-17-43-18__btsnoop_hci.log
-- captures/extracted/bugreport-pa3qxeea-BP2A.250605.031.A3-2026-05-16-17-43-18__btsnoop_hci.log.last.log
+## Key Insight: Two BLE Profiles, Two Protocols
+
+Every Instax camera with BLE advertises **two separate BLE profiles** simultaneously:
+
+| Profile | BLE address prefix | Protocol | Used by |
+|---|---|---|---|
+| **IOS** | `FA:AB:BC:xx:xx:xx` | Link protocol (`41 62` / `61 42` framing) | Instax iOS app, javl/InstaxBLE, **this project** |
+| **Android** | `E0:48:24:xx:xx:xx` (Mini Evo) | Legacy binary (`16xx`/`17xx` writes) | Instax Android app only |
+
+Both profiles share the **same GATT service and characteristic UUIDs** but speak entirely different application protocols.
+
+> **javl/InstaxBLE only connects to `(IOS)` profiles** — its filter is `INSTAX-` prefix + `(IOS)` suffix.
+> Our initial bugreport capture (17-34-32) used the **Android profile** — a red herring for the Link protocol.
+> The correct target for all polling/printing code is the **IOS BLE profile**.
+
+---
+
+## Confirmed Camera Models
+
+| Model | Gen | BLE IOS address | BLE Android address | Film | Shots remaining (captured) |
+|---|---|---|---|---|---|
+| Instax Mini Evo | 1 | `FA:AB:BC:11:6F:D2` | `E0:48:24:D7:CF:2E` | Instax Mini | 1 |
+| Instax Evo Wide ("FI028") | 2 | `FA:AB:BC:1D:0A:7B` | — | Instax Wide | 4 |
+| Instax Mini Evo Cinema | 3 | unknown (not captured) | — | Instax Mini | — |
+
+Notes:
+- Gen 1 BR/EDR address `88:B4:36:11:6F:D2` is a Fujifilm-OUI classic Bluetooth address — **not BLE**.
+- The Evo Wide model ID "FI028" is returned by `DEVICE_INFO_SERVICE` op=(0x00,0x01) payload=0x02.
+- Gen 3 (Mini Evo Cinema) is not in our possession; assumed to use the same Link protocol.
+
+---
+
+## Shared GATT Service (all models, both profiles)
+
+| UUID | Role |
+|---|---|
+| `70954782-2d83-473d-9e5f-81e1d02d5273` | Instax primary service |
+| `70954783-2d83-473d-9e5f-81e1d02d5273` | **Write characteristic** (Write + WriteNoResp) |
+| `70954784-2d83-473d-9e5f-81e1d02d5273` | **Notify characteristic** (subscribe for responses) |
+
+These UUIDs are shared across all known models and both profiles.
+
+---
+
+## GATT Handle Layout
+
+### Gen 1 – Instax Mini Evo, IOS profile (`FA:AB:BC:11:6F:D2`)
+
+Recovered from live probe session (not from HCI log):
+
+| Handle | Props | UUID | Role |
+|---|---|---|---|
+| h=0x0014 | Write, WriteNoResp | `70954783-...` | Write char |
+| h=0x0016 | Notify | `70954784-...` | Notify char |
+| h=0x0018 | — | `0x2902` CCCD | Write `01 00` to enable notifications |
+
+### Gen 1 – Instax Mini Evo, Android profile (`E0:48:24:D7:CF:2E`)
+
+From 17-34-32 HCI capture:
+
+| Handle | Props | Role |
+|---|---|---|
+| h=0x0020 | Write | Generic write channel |
+| h=0x001D | Notify | Notifications from h=0x0020 channel |
+| h=0x002A | Write | DEVICE_ID-auth write channel |
+| h=0x0027 | Notify | Notifications from h=0x002A channel |
+
+### Gen 2 – Instax Evo Wide (`FA:AB:BC:1D:0A:7B`)
+
+Full GATT table from 19-51-52 HCI capture:
+
+| Handle range | Service UUID | Purpose |
+|---|---|---|
+| 0x0001–0x0004 | `0x1801` Generic Attribute | Service Changed (h=0x0003, CCCD h=0x0004) |
+| 0x0005–0x000D | `0x1800` Generic Access | Device name, appearance, etc. |
+| **0x000E–0x0013** | `70954782-2d83-473d-9e5f-81e1d02d5273` | **Instax primary service** |
+| 0x0014–0x0026 | `0x180A` Device Information | DIS — manufacturer, model, serial, FW |
+| 0x0027–0x003B | `0000d0ff-3c17-d293-8e48-14fe2e4da212` | Fujifilm secondary service |
+| 0x003C–0xFFFF | `00006287-3c17-d293-8e48-14fe2e4da212` | Fujifilm tertiary service |
+
+Instax primary service characteristics (gen 2):
+
+| Handle | Props | UUID | Role |
+|---|---|---|---|
+| **h=0x0010** | Write, WriteNoResp | `70954783-...` | **Write char** |
+| **h=0x0012** | Notify | `70954784-...` | **Notify char** |
+| **h=0x0013** | — | `0x2902` CCCD | Write `01 00` to enable notifications |
+
+Device Information service (gen 2):
+
+| Handle | UUID | Returns |
+|---|---|---|
+| h=0x0016 | `0x2A29` Manufacturer Name | `"FUJIFILM"` |
+| h=0x0018 | `0x2A24` Model Number | `"FI028"` |
+| h=0x001A | `0x2A25` Serial Number | `"92007814"` |
+| h=0x001C | `0x2A27` Hardware Revision | (unknown) |
+| h=0x001E | `0x2A26` Firmware Revision | (unknown) |
+| h=0x0020 | `0x2A28` Software Revision | (unknown) |
+| h=0x0022 | `0x2A23` System ID | (unknown) |
+| h=0x0024 | `0x2A2A` Regulatory | (unknown) |
+| h=0x0026 | `0x2A50` PnP ID | (unknown) |
+
+Fujifilm secondary service chars (h=0x0027–0x003B):
+
+| Handle | Props | UUID | Purpose |
+|---|---|---|---|
+| h=0x0029 | WriteNoResp | `0xFFD1` | Unknown (possibly OTA write) |
+| h=0x002B | Read | `0xFFD2` | Unknown |
+| h=0x002D | Read | `0xFFD3` | Unknown |
+| h=0x002F | Read | `0xFFD4` | Unknown |
+| h=0x0031 | Read | `0xFFF1` | Unknown |
+| h=0x0033 | Read | `0xFFE0` | Unknown |
+| h=0x0035 | Read | `0xFFE1` | Unknown |
+| h=0x0037 | Read | `0xFFF3` | Unknown |
+| h=0x0039 | Read | `0xFFF4` | Unknown |
+| h=0x003B | Read | `0xFFF5` | Unknown |
+
+Fujifilm tertiary service chars (h=0x003C–0xFFFF):
+
+| Handle | Props | UUID | Purpose |
+|---|---|---|---|
+| h=0x003E | WriteNoResp | `00006387-3c17-d293-8e48-14fe2e4da212` | Unknown write |
+| h=0x0040 | Write, Notify | `00006487-3c17-d293-8e48-14fe2e4da212` | Unknown cmd+notify |
+| h=0x0041 | — | `0x2902` CCCD | CCCD for h=0x0040 |
+
+---
+
+## Link Protocol (IOS profile — all models)
+
+This is the **javl/InstaxBLE** protocol, used by the Instax iOS app and all IOS BLE profiles.
+The Instax Android app does **not** use this protocol.
+
+### Packet format
+
+```
+Request:   41 62  [length: uint16 BE]  [op1]  [op2]  [payload...]  [checksum]
+Response:  61 42  [length: uint16 BE]  [op1]  [op2]  [payload...]  [checksum]
+```
+
+- `41 62` = `"Ab"` — phone to printer
+- `61 42` = `"aB"` — printer to phone
+- `length` = total packet size in bytes (including the 2-byte header and 1-byte checksum)
+- `checksum` = `(255 - (sum(all_preceding_bytes) & 255)) & 255`
+- Minimum packet (no payload) = 7 bytes: `41 62 00 07 [op1] [op2] [cs]`
+
+> **How to read the `00` in `41 62 00 07 ...`:** The `00` is the *high byte* of the 2-byte big-endian length
+> field (since BLE packets are always < 256 bytes, the high byte is always `0x00`). There is **no** 3-byte
+> header — the format is `[41 62] [00 07]` = header(2) + length(2), not `[41 62 00] [07]`.
+
+Checksum identity: `(sum(entire_packet) & 255) == 255`
+
+Packets > ~182 bytes are split into multiple BLE write commands; reassemble before parsing.
+
+### Python packet builder
+
+```python
+import struct
+
+def create_packet(op1: int, op2: int, payload: bytes = b'') -> bytes:
+    """Build an Instax Link protocol request packet."""
+    header = b'\x41\x62'
+    length = struct.pack('>H', 7 + len(payload))
+    body   = header + length + bytes([op1, op2]) + payload
+    cs     = (255 - (sum(body) & 255)) & 255
+    return body + bytes([cs])
+
+def validate_checksum(packet: bytes) -> bool:
+    return (sum(packet) & 255) == 255
+```
+
+### EventType op codes
+
+Sourced from [javl/InstaxBLE `Types.py`](https://github.com/javl/InstaxBLE/blob/main/Types.py),
+cross-referenced with the gen 2 Evo Wide HCI capture:
+
+| op1 | op2 | Name | Notes |
+|---|---|---|---|
+| 0x00 | 0x00 | `SUPPORT_FUNCTION_AND_VERSION_INFO` | Init/hello — first packet sent |
+| 0x00 | 0x01 | `DEVICE_INFO_SERVICE` | Device info (payload = InfoType byte) |
+| 0x00 | 0x02 | `SUPPORT_FUNCTION_INFO` | Status/battery poll (payload = InfoType byte) |
+| 0x00 | 0x10 | `IDENTIFY_INFORMATION` | |
+| 0x01 | 0x00 | `SHUT_DOWN` | |
+| 0x01 | 0x02 | `AUTO_SLEEP_SETTINGS` | |
+| 0x10 | 0x00 | `PRINT_IMAGE_DOWNLOAD_START` | |
+| 0x10 | 0x01 | `PRINT_IMAGE_DOWNLOAD_DATA` | Chunked image bytes |
+| 0x10 | 0x02 | `PRINT_IMAGE_DOWNLOAD_END` | |
+| 0x10 | 0x80 | `PRINT_IMAGE` | Trigger the print |
+| 0x10 | 0x81 | `REJECT_FILM_COVER` | |
+| 0x20 | 0x00 | `FW_DOWNLOAD_START` | Firmware update |
+| 0x20 | 0x10 | `FW_PROGRAM_INFO` | Firmware version query — seen in gen 2 |
+| 0x30 | 0x00 | `XYZ_AXIS_INFO` | Accelerometer |
+| 0x30 | 0x01 | `LED_PATTERN_SETTINGS` | |
+| 0x80 | 0x00 | `CAMERA_SETTINGS` | Evo-specific camera setting write |
+| 0x80 | 0x01 | `CAMERA_SETTINGS_GET` | Evo-specific camera setting read |
+| 0x80 | 0x10 | *(Evo-specific)* | Read config register bank (gen 2 observed) |
+| 0x80 | 0x11 | *(Evo-specific)* | Read individual register (payload = reg ID + 4 zero bytes) |
+| 0x84 | 0x00 | `CAMERA_LOG_SUBTOTAL_START` | Film remaining query — **confirmed gen 2** |
+| 0x84 | 0x01 | `CAMERA_LOG_SUBTOTAL_DATA` | |
+| 0x84 | 0x02 | `CAMERA_LOG_SUBTOTAL_CLEAR` | |
+| 0x84 | 0x03 | `CAMERA_LOG_DATE_START` | |
+| 0x84 | 0x06 | `CAMERA_LOG_FILTER_START` | |
+
+### InfoType payload values
+
+Used as the single payload byte in `DEVICE_INFO_SERVICE` (op1=0x00, op2=0x01) and `SUPPORT_FUNCTION_INFO` (op1=0x00, op2=0x02) requests:
+
+| Value | Name | Notes |
+|---|---|---|
+| 0x00 | `IMAGE_SUPPORT_INFO` | Response payload: two BE uint16 = (width, height); 600×800 mini, 800×800 square, 1260×840 wide |
+| 0x01 | `BATTERY_INFO` | Response payload bytes 0–1: `[battery_state][battery_pct]` |
+| 0x02 | `PRINTER_FUNCTION_INFO` | Response payload byte 0: `photos_left = byte & 0x0F`, `charging = byte & 0x80` |
+| 0x03 | `PRINT_HISTORY_INFO` | |
+| 0x04 | `CAMERA_FUNCTION_INFO` | |
+| 0x05 | `CAMERA_HISTORY_INFO` | |
+
+### Status query sequence (IOS profile, any model)
+
+```python
+# Connect — NO pairing required for IOS profile
+# Enable notifications on notify char 70954784-...
+
+# 1. Hello
+pkt = create_packet(0x00, 0x00)               # SUPPORT_FUNCTION_AND_VERSION_INFO
+# 2. Image size → determines film format (mini/square/wide)
+pkt = create_packet(0x00, 0x01, b'\x00')      # DEVICE_INFO_SERVICE IMAGE_SUPPORT_INFO
+# 3. Battery
+pkt = create_packet(0x00, 0x02, b'\x01')      # SUPPORT_FUNCTION_INFO BATTERY_INFO
+# 4. Photos left
+pkt = create_packet(0x00, 0x02, b'\x02')      # SUPPORT_FUNCTION_INFO PRINTER_FUNCTION_INFO
+```
+
+### Parsing status responses
+
+All responses use the same framing: `61 42 [len:2B_BE] [op1] [op2] [payload...] [checksum]`.
+Payload starts at byte offset 6.
+
+**Battery (`SUPPORT_FUNCTION_INFO` + `BATTERY_INFO`):**
+
+```python
+battery_state, battery_pct = struct.unpack_from('>BB', response, 6)
+# battery_state: 0=critical, 1=low, 2=medium, 3=high, 4=full (range may vary by model)
+# battery_pct: 0–100
+```
+
+**Photos left (`SUPPORT_FUNCTION_INFO` + `PRINTER_FUNCTION_INFO`):**
+
+```python
+status_byte = response[6]
+photos_left = status_byte & 0x0F    # low 4 bits (max 10 for a standard pack)
+is_charging = bool(status_byte & 0x80)
+```
+
+---
+
+## Gen 2 (Evo Wide) — Observed BLE Session
+
+From 19-51-52 HCI capture. All 4 captured BLE connections are **identical** — no session state changes.
+
+### Connection sequence
+
+```
+Write h=0x0013 = 01 00                Enable CCCD for notify char h=0x0012
+
+op=(0x00,0x00)  []                    SUPPORT_FUNCTION_AND_VERSION_INFO
+op=(0x00,0x01)  [0x00]                IMAGE_SUPPORT_INFO → 1260×840 (Wide confirmed)
+op=(0x00,0x01)  [0x01]                → "FUJIFILM"
+op=(0x00,0x01)  [0x02]                → "FI028" (model)
+op=(0x00,0x01)  [0x03]                → "92007814" (serial)
+op=(0x00,0x01)  [0x04]                → "0000"
+op=(0x00,0x01)  [0x05]                → "0100"
+op=(0x00,0x01)  [0x09]                → (empty)
+op=(0x00,0x01)  [0x0A]                → (empty)
+op=(0x00,0x02)  [0x00]                SUPPORT_FUNCTION_INFO IMAGE_SUPPORT_INFO → 1260×840
+op=(0x20,0x10)  []                    FW_PROGRAM_INFO → firmware version bytes
+op=(0x80,0x10)  []                    [Evo] config register bank → 0x00020003
+op=(0x80,0x11)  [0x0B, 0,0,0,0]      [Evo] read reg 0x0B → 2
+op=(0x80,0x11)  [0x0C, 0,0,0,0]      → 0
+op=(0x80,0x11)  [0x13, 0,0,0,0]      → 0
+op=(0x80,0x11)  [0x14, 0,0,0,0]      → 0
+op=(0x80,0x11)  [0x15, 0,0,0,0]      → 0
+op=(0x80,0x11)  [0x16, 0,0,0,0]      → 0x32 = 50  (possibly total prints taken)
+op=(0x80,0x11)  [0x17, 0,0,0,0]      → 0x01 = 1
+op=(0x80,0x11)  [0x18..0x1A, ...]    → 0
+op=(0x80,0x11)  [0x1B, 0,0,0,0]      → 1
+op=(0x84,0x00)  []                    CAMERA_LOG_SUBTOTAL_START → film remaining = 4 ✓
+op=(0x84,0x01)  []                    → (zeros)
+[periodic keepalive notifications from camera]
+```
+
+### Film remaining — Evo Wide
+
+`CAMERA_LOG_SUBTOTAL_START` (op=0x84,0x00) response payload (bytes 6–17):
+```
+00 00 00 00  04 00 00 00  04 00 00 00
+             ^^^^^^^^^^^
+             uint32 LE = 4  ← photos remaining (confirmed by user observation: 4 shots left)
+```
+
+### Image size — Evo Wide
+
+`SUPPORT_FUNCTION_INFO` IMAGE_SUPPORT_INFO response payload (bytes 6+):
+```
+04 EC  03 48  ...
+^^^^^  ^^^^^
+0x04EC=1260   0x0348=840  ← Instax Wide film dimensions ✓
+```
+
+---
+
+## Legacy Android Protocol (gen 1 only, not used in this project)
+
+Only valid on the Android BLE profile (`E0:48:24:D7:CF:2E`). Captured in 17-34-32 HCI log.
+
+### Device-specific DEVICE_ID (8 bytes, gen 1 Mini Evo)
+
+```
+8d 3d b0 e5 92 59 03 3d
+```
+
+### Handshake writes
+
+```
+Write h=0x002A: 00 05  [DEVICE_ID 8b]  00 00        (12 bytes, WriteCommand)
+Write h=0x0020: 00 05  01 00 00 00 00 00 00 00 00 00
+Write h=0x002A: 00 00  [DEVICE_ID 8b]  04 00 00
+Write h=0x0020: 00 00  01 00 00 00 00 00 00 00 04 00 00
+```
+
+### Status poll commands (post-handshake)
+
+```
+Write h=0x002A: 16 00   (poll init)
+Write h=0x0020: 17 00
+Write h=0x002A: 16 01   → Notify h=0x0027: 16 01 00 03 44  (battery level = 3 HIGH)
+Write h=0x002A: 16 02   → Notify h=0x0027: 16 02 01 02 02  (film remaining = 1)
+```
+
+Decoding:
+- `16 01 00 03 44`: battery_level = byte[3] = 0x03 (scale 0–4, confirmed "3 pips" full)
+- `16 02 01 02 02`: film count field = byte[2] = 0x01 → 1 shot remaining
+
+### Keep-alive pings (Android protocol)
+
+Every ~25 seconds: `19 00 [seq]` / `1B 00 [seq]` on h=0x0027 / h=0x001D.
+Sequence counter is global across BLE connection sessions.
+
+---
+
+## Known Film Counts (captured)
+
+| Camera | Film remaining | Source |
+|---|---|---|
+| Gen 1 Mini Evo | 1 shot | Android protocol `16 02` response |
+| Gen 2 Evo Wide | 4 shots | `CAMERA_LOG_SUBTOTAL_START` response uint32 LE at payload[4:8] |
+
+---
+
+## Capture Log Files
+
+| File | Camera | Profile | Notes |
+|---|---|---|---|
+| `captures/extracted/.../17-34-32/btsnoop_hci.log` | Gen 1 Mini Evo | **Android** | Full print session decoded; battery + film count confirmed |
+| `captures/extracted/19-51-52/FS/data/log/bt/btsnoop_hci.log` | Gen 2 Evo Wide | **IOS** | 4 identical BLE connections; full Link protocol decoded |
+| `captures/extracted/19-51-52/.../btsnoop_hci.log.last` | Mixed | — | Also contains BR/EDR traffic from an Instax printer |
+
+---
+
+## Connection Notes
+
+- **IOS profile does not require BLE pairing.** Do not call `pair()` — it will cause a stale-bond disconnect on Windows.
+- Android profile requires pairing + DEVICE_ID auth. Not used by this project.
+- If Windows shows a stale bond for an INSTAX device, remove it in Settings → Bluetooth & devices, then reconnect.
+- javl's device scanner: `foundName.startswith('INSTAX-') and foundName.endswith('(IOS)')`
+- The gen 2 Evo Wide IOS profile name is `INSTAX-1D0A7B (IOS)` (last 3 bytes of BLE address).
+
+---
+
+## References
+
+- [javl/InstaxBLE](https://github.com/javl/InstaxBLE) — Python library for Instax Link printers (Mini/Square/Wide Link) via IOS BLE profile. Protocol is structurally identical to what Evo Wide uses.
+- [javl/InstaxBLE `Types.py`](https://github.com/javl/InstaxBLE/blob/main/Types.py) — EventType and InfoType enumerations
+- [javl/InstaxBLE issue #4](https://github.com/javl/InstaxBLE/issues/4#issuecomment-1484123671) — Android bugreport HCI capture guide
+- [jpwsutton/instax_api](https://github.com/jpwsutton/instax_api) — older WiFi-based Instax protocol
+
+---
+
+## Appendix: First-pass Android capture notes (17-34-32, now superseded)
 
 Method:
 
