@@ -1,13 +1,18 @@
 """
-Live-view puller — connects and pulls the camera's current live-view frame via
-the 0x82 protocol group.
+Live-view puller — connects and streams live viewfinder frames from the camera
+via the 0x82 protocol group.
 
-Despite the name "history_receive", 0x82 has been confirmed to return a JPEG of
-what the camera lens is seeing RIGHT NOW (live view), not stored print thumbnails.
+0x82 is confirmed LIVE VIEW: each 0x82,0x01 pull returns a FRESH 160×106 px JPEG
+of whatever the camera lens sees at that instant (~20 fps stream). Confirmed from
+btsnoop session 144: 176 unique JPEG frames, all 160×106, delivered over 8.57 s.
+It is NOT stored-photo transfer.
 
-The camera enters "transfer ready" mode when the user presses the share button.
-It then waits for the phone to initiate the pull sequence:
-  0x84,0x09 → 0x84,0x0a → 0x84,0x0b → 0x80,0x15 → 0x82,0x00 → 0x82,0x01×N → 0x82,0x02
+The camera enters live-view / remote-shutter mode when the user presses the share
+button. It then waits for the phone to initiate the pull sequence:
+  0x84,0x09 → 0x84,0x0a → 0x80,0x15 → 0x82,0x00 → 0x82,0x01×N → 0x82,0x02
+
+Each 0x82,0x01 response payload:
+  [2B chunk_idx=0x0001][3B frame_header][JPEG bytes (FFD8FF...)]
 
 Run this while the camera is showing "waiting to transfer" on its screen.
 
@@ -82,6 +87,7 @@ async def receive_history():
 
             await cam._client.start_notify(NOTIFY_UUID, cam._notification_handler)
             cam._log("Subscribed to notify char — ready")
+            await asyncio.sleep(0.5)  # wait for any proactive camera pushes
             break
         except Exception as e:
             print(f"  Attempt {attempt} failed: {e}")
@@ -94,6 +100,67 @@ async def receive_history():
             await asyncio.sleep(3)
 
     print(f"Connected  MTU={cam._client.mtu_size}\n")
+
+    async def drain_queue():
+        """Discard any queued notifications (stale fragments, proactive pushes)."""
+        while not cam._rx_queue.empty():
+            try:
+                cam._rx_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        await asyncio.sleep(0.15)
+        while not cam._rx_queue.empty():
+            try:
+                cam._rx_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+    # Drain any stale notifications accumulated before we started
+    await drain_queue()
+
+    async def recv_large(timeout=15.0):
+        """Collect ATT notification chunks until we have a complete IOS Link packet.
+
+        Scans for 61 42 magic so leading non-IOS bytes (stale fragments) are skipped.
+        Handles a camera firmware quirk: empty-slot responses send total_len-1 bytes
+        (the checksum byte is omitted), so we accept the packet after a 0.5s grace wait.
+        """
+        buf = bytearray()
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError("recv_large: timeout")
+            chunk = await asyncio.wait_for(cam._rx_queue.get(), timeout=remaining)
+            buf.extend(chunk)
+            # Scan for IOS Link magic
+            magic_pos = -1
+            for i in range(len(buf) - 1):
+                if buf[i] == 0x61 and buf[i + 1] == 0x42:
+                    magic_pos = i
+                    break
+            if magic_pos < 0:
+                continue
+            if magic_pos > 0:
+                buf = buf[magic_pos:]
+            if len(buf) < 4:
+                continue
+            total_len = struct.unpack_from(">H", buf, 2)[0]
+            if total_len < 7:
+                buf = buf[2:]
+                continue
+            if len(buf) >= total_len:
+                return bytes(buf[:total_len])
+            # Camera firmware quirk: empty-slot responses omit the checksum byte.
+            # If we're exactly 1 byte short, wait briefly then accept as-is.
+            if len(buf) == total_len - 1:
+                try:
+                    one_more = await asyncio.wait_for(cam._rx_queue.get(), timeout=0.5)
+                    buf.extend(one_more)
+                    if len(buf) >= total_len:
+                        return bytes(buf[:total_len])
+                except asyncio.TimeoutError:
+                    return bytes(buf)  # accept truncated packet (missing checksum)
 
     async def xchg(op1, op2, payload=b"", timeout=5.0, label=""):
         dec = await cam._send_recv(op1, op2, payload, timeout=timeout)
@@ -130,10 +197,29 @@ async def receive_history():
             print(f"\n{'─'*60}")
             print(f"── Entry {img_idx+1}/{count} (index={img_idx}) ──")
 
-            await xchg(0x84, 0x0a, bytes([img_idx]) + bytes(4),
-                       label=f"SUB_QUERY idx={img_idx}")
-            await xchg(0x84, 0x0b, bytes([img_idx]),
-                       label=f"ACK idx={img_idx}")
+            # Download the log blob — use recv_large since it can be ~1636B+ fragmented
+            print(f"  [LOG_SLOT_DATA idx={img_idx}]  sending 0x84,0x0a ...")
+            slot_pkt = create_packet(0x84, 0x0a, bytes([img_idx]) + bytes(4))
+            await cam._send(slot_pkt)
+            try:
+                blob_raw = await recv_large(timeout=10.0)
+                blob_dec = decode_response(blob_raw)
+                if not blob_dec.get("error"):
+                    p = blob_dec["payload"]
+                    print(f"  [LOG_SLOT_DATA idx={img_idx}]  blob [{len(p)}B] "
+                          f"header={p[:6].hex()}  first_date={p[6:14]!r}")
+                else:
+                    print(f"  [LOG_SLOT_DATA idx={img_idx}]  decode error ({len(blob_raw)}B)")
+            except asyncio.TimeoutError:
+                print(f"  [LOG_SLOT_DATA idx={img_idx}]  timeout — no blob received")
+
+            # Drain any remaining fragments before next command
+            await drain_queue()
+
+            # Skip SLOT_ACK (0x84,0x0b) — sending ACK may commit the log clear.
+            # The camera log will remain intact for subsequent reads.
+            print(f"  [SLOT_ACK skipped — log preserved]")
+
             await xchg(0x80, 0x15, bytes(17), label="PREPARE")
 
             print(f"\n── 0x82,0x00  LIVE_VIEW_START idx={img_idx} ──")

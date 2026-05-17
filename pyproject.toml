@@ -13,3 +13,4 @@ dependencies = [
 
 [project.scripts]
 instax-lab = "instax_lab.cli:app"
+instax-gui = "instax_lab.gui:main"
