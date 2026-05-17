@@ -9,29 +9,23 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 
 ## Protocol Coverage Status (as of 2026-05-17)
 
-All core behaviours for the **Instax Evo Wide (FI028, Gen 2)** are confirmed and
-implemented. Remaining unknowns are metadata registers and lifetime counters that
-have no effect on operation.
-
-| Feature | Status | Opcode(s) |
-|---|---|---|
-| BLE connect / handshake | ✅ Confirmed | `(00,00)` + `(00,01)` info queries |
-| Status poll (battery, photos left, model) | ✅ Confirmed | `(00,02)` |
-| Transfer-ready flag detection | ✅ Confirmed | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
-| Share-button image pull | ✅ Confirmed | `(88,00…0b)` chunk request-response |
-| Live view (pull loop) | ✅ Confirmed | `(82,00/01/02)` |
-| Flash control | ✅ Confirmed | `(80,11)` reg_id=0x0b, values 0x00/01/02 |
-| Auto-transfer after shutter (inline) | ✅ Confirmed | `(82,10/20/21/22)` |
-| Inline transfer + seamless LV resume | ✅ Implemented | ack `(82,02)` → transfer → `(82,00)` reopen |
-| Print (sending JPEG to camera) | ⏳ Not implemented | `(80,xx)` print opcodes |
-| History log / stored image list | ⏳ Not explored | `(84,xx)` |
-| `(82,10/20/21/22)` via Share button | ❓ Unconfirmed | only observed after remote shutter |
-| Register semantics (0x0C, 0x13–0x1B) | ❓ Unknown | `(80,11)` read — values are 0x00/0x01 |
-| `DEVICE_INFO` strings 0x03/0x04/0x05 | ❓ Unknown | `(00,01)` InfoType 3–5 |
-| `CAMERA_FUNCTION_INFO` byte[0]/byte[1] | ❓ Unknown | 0x03/0x50 at rest, 0x02/0x32 after print |
-| `PRINT_HISTORY_INFO` second uint32 | ❓ Unknown | always 5 in captured sessions |
-| Secondary GATT service (`0x6387…`) | ❓ Unknown | possibly OTA / config |
-| Gen 3 Cinema (FI0xx) | ❓ Not in possession | assumed same Link protocol |
+| Feature | Evo Wide FI028 (Gen 2) | Mini Evo FI019 (Gen 1) | Opcode(s) |
+|---|---|---|---|
+| BLE connect / handshake | ✅ | ✅ | `(00,00)` + `(00,01)` |
+| Status poll (battery, photos left, model) | ✅ | ✅ | `(00,02)` |
+| Transfer-ready flag detection | ✅ | ✅ (flag seen, transfer not usable) | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
+| **Print** (phone → camera → film ejected) | ✅ | ✅ | `(80,xx)` print opcodes |
+| Flash control | ✅ | ❓ Not tested | `(80,11)` reg_id=0x0b |
+| Live view (pull loop) | ✅ | ⚠️ Partial — worked then failed; needs more investigation | `(82,00/01/02)` |
+| Auto-transfer after shutter (inline) | ✅ seamless LV resume | ❓ Unknown — `(82,10/20/21/22)` untested on Gen 1 | `(82,10/20/21/22)` |
+| Share-button image pull | ✅ | ❌ Camera disconnects on `(88,00)` | `(88,00…0b)` |
+| History log / stored image list | ⏳ Not explored | ⏳ Not explored | `(84,xx)` |
+| `(82,10/20/21/22)` via Share button | ❓ Only seen after shutter | ❓ Unknown | — |
+| Register semantics (0x0C, 0x13–0x1B) | ❓ Unknown | ❓ Unknown | `(80,11)` read |
+| `DEVICE_INFO` strings 0x03/0x04/0x05 | ❓ Unknown | ❓ Unknown | `(00,01)` InfoType 3–5 |
+| `CAMERA_FUNCTION_INFO` byte[0]/byte[1] | ❓ Unknown | ❓ Unknown | values differ at rest vs. after print |
+| Secondary GATT service (`0x6387…`) | ❓ Unknown | ❓ Unknown | possibly OTA / config |
+| Gen 3 Cinema (FI0xx) | — | — | Not in possession; assumed same Link protocol |
 
 ---
 
@@ -283,7 +277,7 @@ Response payload format: `[0x00][InfoType_echo][data…]`
 | 0x00 | `IMAGE_SUPPORT_INFO` | **`[width: 2B BE][height: 2B BE][…]`** — always query this first; use the camera-reported size for all image prep. See [film dimensions table](#film-dimensions-by-model--print-mode). |
 | 0x01 | `BATTERY_INFO` | `[battery_state][battery_pct]`. State: 0=critical, 1=low, 2=medium, 3=high, 4=full. |
 | 0x02 | `PRINTER_FUNCTION_INFO` | `[status_byte][0x00][shots_in_pack: 2B]…`. `photos_left = status_byte & 0x0F`, `charging = bool(status_byte & 0x80)`. Wide Evo: status=0x26 → 6 remaining, shots_in_pack=0x000C=12. |
-| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: transfers][uint32 BE: ?]`. Wide Evo: `00000004 00000005` → transfers=4. **These are digital photo-to-phone transfers, NOT physical film ejections.** |
+| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: transfers][uint32 BE: prints_made]`. Wide Evo: `00000004 00000005` → transfers=4 (digital photo-to-phone), prints_made=5 (physical film ejections). |
 | 0x04 | `CAMERA_FUNCTION_INFO` | 16B data. **`data[2]` (= full payload[4]) = `0x01` when camera is in transfer-ready state** (user pressed Share); `0x00` at rest. This is the flag the app polls to know when to fire `(88,00)`. Confirmed from btsnoop: flag appeared 0.6 s before app sent `(88,00)`. Normal response (Wide Evo, new_capture): `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`; `data[0]`=0x03, `data[1]`=0x50. Semantics of other bytes TBD. |
 | 0x05 | `CAMERA_HISTORY_INFO` | `[0x00][0x00][0x17]` (Wide Evo). `0x17`=23 — possibly lifetime print counter. |
 
@@ -518,7 +512,7 @@ Repeat every ~0.5 s
 Decoded keepalive values from 19-51-52 capture:
 - Battery: state=2 (medium), pct=50%
 - Shots remaining: `0x26 & 0x0F` = 6; shots_in_pack=12 (Wide Evo)
-- Digital photo transfers to phone: 4 (PRINT_HISTORY_INFO field 1 = 4; **NOT** physical prints — 0 physical prints were made in this session)
+- Digital photo transfers to phone: 4 (PRINT_HISTORY_INFO field 1 = 4); physical film ejections: 5 (field 2 = 5, `prints_made`)
 - CAMERA_FUNCTION_INFO byte[0]=0x02, byte[1]=0x32=50 (semantics TBD)
 - CAMERA_HISTORY_INFO byte[2]=0x17=23 (possibly lifetime print counter)
 
@@ -1022,8 +1016,8 @@ This protocol was only observed after **remote shutter captures** (phone app shu
 ## Gen 1 (FI019 Mini Evo) — Protocol Compatibility Notes
 
 The Mini Evo (Gen 1, model FI019, firmware-updated) participates in the IOS Link
-protocol for status queries and live view, but **does not support the `(88,xx)` image
-transfer protocol**.
+protocol for status queries and printing, but **does not support the `(88,xx)` image
+transfer protocol** and has only partial live view support.
 
 ### Confirmed behaviour (live tests, Mini Evo `FA:AB:BC:11:6F:D2`)
 
@@ -1031,9 +1025,11 @@ transfer protocol**.
 |---|---|---|
 | Status queries (00,xx) | ✅ Works | Battery, model, serial, photos_left all returned correctly |
 | `CAMERA_FUNCTION_INFO` poll | ✅ Works | Flag appears (0x01) when user presses Transfer |
+| **Print** (phone → camera → film ejected) | ✅ Works | Same `(80,xx)` print sequence as Gen 2 |
 | `(88,00)` IMAGE_TRANSFER_START | ❌ **Camera disconnects** | Sending `(88,00)` causes the camera to drop the BLE link immediately |
-| Live view `(82,xx)` | ✅ Works | Confirmed 2026-05-17 on Mini Evo (`FA:AB:BC:11:6F:D2`). Same `(82,00/01/02)` framing and payload layout as Gen 2. Frame size and image dimensions may differ. |
-| `(84,xx)` log queries | ⏳ Not yet confirmed | — |
+| Live view `(82,xx)` | ⚠️ **Partial** | Frames received in initial tests (same `(82,00/01/02)` framing as Gen 2) but subsequently failed to maintain a stable session. Root cause unknown — may be a timing, pairing, or firmware issue. Needs further investigation. |
+| Auto-transfer after shutter `(82,10/20/21/22)` | ❓ Not tested | Unknown whether Gen 1 supports this after a live-view shutter |
+| `(84,xx)` log queries | ⏳ Not explored | — |
 
 ### `(88,xx)` not supported on Gen 1
 
