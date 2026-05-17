@@ -182,3 +182,4 @@ cython_debug/
 
 .captures\extracted
 /captures/extracted
+/captures

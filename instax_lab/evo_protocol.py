@@ -29,8 +29,11 @@ WRITE_UUID   = "70954783-2d83-473d-9e5f-81e1d02d5273"
 NOTIFY_UUID  = "70954784-2d83-473d-9e5f-81e1d02d5273"
 
 # Image dimensions → JPEG chunk size (bytes per PRINT_IMAGE_DOWNLOAD_DATA packet)
+# Keys are (width, height) as reported by IMAGE_SUPPORT_INFO (InfoType 0x00).
+# Always query the camera first — never assume dimensions from the model name.
 FILM_DIMS: dict[tuple[int, int], int] = {
-    (600,  800):  900,   # Instax Mini  (FI019 Mini Evo, Mini Link, ...)
+    (600,  800):  900,   # Instax Mini portrait  (FI019 Mini Evo, Mini Link, ...)
+    (800,  600):  900,   # Instax Mini landscape  (Gen 3 Cinema — smartphone print mode)
     (800,  800): 1808,   # Instax Square
     (1260, 840):  900,   # Instax Wide  (FI028 Evo Wide, Wide Link, ...)
 }
@@ -370,6 +373,138 @@ class InstaxCamera:
                 pass
         else:
             self._log("Print data sent (enable_print=False — not triggering ejection)")
+
+    # ------------------------------------------------------------------
+    # Print history (0x82 / 0x84 family — confirmed 2026-05-17)
+    # ------------------------------------------------------------------
+
+    async def get_history_count(self) -> int:
+        """Return the number of images stored in the camera's print history.
+
+        Sends HISTORY_ENTRY_QUERY (0x84, 0x09) with index=0.
+        Camera response payload (14 bytes):
+          [2B index_echo][4B size_field][4B size_field][4B entry_count BE]
+        Returns entry_count (0 if response is malformed or empty).
+        """
+        dec = await self._send_recv(0x84, 0x09, b'\x00', timeout=5.0)
+        p = dec.get("payload", b"")
+        # 14-byte response → valid entry list; 1-byte 0x80 → no history
+        if len(p) >= 14:
+            return struct.unpack_from(">I", p, 10)[0]
+        return 0
+
+    async def download_history_image(self, index: int = 0) -> bytes:
+        """Download a JPEG stored in the camera's print history.
+
+        Protocol flow (confirmed from BLE capture 19-51-52):
+          1. HISTORY_ENTRY_QUERY   (0x84,0x09) with [index]
+          2. HISTORY_ENTRY_SUBQUERY (0x84,0x0a) with [index][00 00 00 00]
+          3. HISTORY_ENTRY_ACK     (0x84,0x0b) with [index]
+          4. HISTORY_DOWNLOAD_PREPARE (0x80,0x15) with 17 zero bytes
+          5. HISTORY_DOWNLOAD_START   (0x82,0x00) with [index]
+          6. Loop: HISTORY_DOWNLOAD_DATA (0x82,0x01) pull (empty payload)
+               → camera replies with framed [2B chunk_idx][JPEG...] notification
+               → followed by N raw (unframed) ATT notifications (JPEG continuation)
+             Repeat until JPEG EOI (ff d9) detected or no data for 2 s.
+          7. HISTORY_DOWNLOAD_END (0x82,0x02) with [0x00]
+
+        Args:
+            index: 0-based history entry index.
+
+        Returns:
+            Raw JPEG bytes for the requested history entry.
+
+        Raises:
+            RuntimeError: on protocol errors or if no image data is received.
+        """
+        # ---- 1-3: Entry query / ack ----
+        # Wide Evo: returns 14 bytes (all zeros). Mini Evo: returns 1 byte (0x80).
+        # Neither model puts useful data in the response; proceed regardless.
+        meta = await self._send_recv(0x84, 0x09, bytes([index]), timeout=5.0)
+        mp = meta.get("payload", b"")
+        self._log(f"  0x84,0x09 response [{len(mp)}B]: {mp.hex() or 'empty'}")
+        await self._send_recv(0x84, 0x0a, bytes([index]) + bytes(4), timeout=5.0)
+        await self._send_recv(0x84, 0x0b, bytes([index]), timeout=5.0)
+
+        # ---- 4: Prepare ----
+        await self._send_recv(0x80, 0x15, bytes(17), timeout=5.0)
+
+        # ---- 5: Start ----
+        dec = await self._send_recv(0x82, 0x00, bytes([index]), timeout=10.0)
+        if dec.get("error"):
+            raise RuntimeError(f"HISTORY_DOWNLOAD_START rejected for index {index}")
+
+        # ---- 6: Pull loop ----
+        pull_pkt  = create_packet(0x82, 0x01)   # empty payload pull request
+        jpeg_buf  = bytearray()
+        MAX_PULLS = 1000   # safety cap; typical Evo Wide image needs ~176 pulls
+
+        for pull_num in range(MAX_PULLS):
+            self._log(f"  pull {pull_num + 1}")
+            await self._send(pull_pkt)
+
+            # Drain all notifications for this pull.
+            # Use 5s timeout for first notification (camera takes ~200ms), then
+            # 0.5s drain timeout for continuation fragments within same burst.
+            got_any = False
+            transfer_ended = False
+            first_in_pull = True
+            while True:
+                timeout = 5.0 if first_in_pull else 0.50
+                try:
+                    raw = await asyncio.wait_for(
+                        self._rx_queue.get(), timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    break   # end of this pull's burst
+
+                first_in_pull = False
+                got_any = True
+                if raw[:2] == b'\x61\x42':
+                    dec2 = decode_response(raw)
+                    if dec2.get("error"):
+                        continue
+                    op1, op2 = dec2["op"]
+                    if op1 == 0x82 and op2 == 0x01:
+                        p = dec2["payload"]
+                        if len(p) <= 2:
+                            # Camera signalled end of data (no JPEG chunk)
+                            transfer_ended = True
+                            break
+                        # Skip 2-byte chunk index, take JPEG payload
+                        jpeg_buf.extend(p[2:])
+                    elif op1 == 0x82 and op2 == 0x02:
+                        # Camera signalled end of transfer
+                        transfer_ended = True
+                        break
+                    # Any other framed notification: ignore
+                else:
+                    # Raw ATT notification — bare JPEG continuation bytes
+                    jpeg_buf.extend(raw)
+
+            # Check for JPEG End-Of-Image marker
+            eoi_pos = jpeg_buf.find(b'\xff\xd9')
+            if eoi_pos != -1:
+                jpeg_buf = jpeg_buf[:eoi_pos + 2]
+                self._log(f"  JPEG complete after pull {pull_num + 1} "
+                          f"({len(jpeg_buf) / 1024:.1f} KB)")
+                break
+
+            if transfer_ended or not got_any:
+                break
+
+        # ---- 7: End ----
+        await self._send_recv(0x82, 0x02, b'\x00', timeout=5.0)
+
+        if not jpeg_buf:
+            raise RuntimeError(
+                f"No image data received for history index {index}"
+            )
+        if jpeg_buf[:2] != b'\xff\xd8':
+            self._log(f"WARNING: downloaded data does not start with JPEG SOI "
+                      f"(starts with {jpeg_buf[:4].hex()})")
+
+        return bytes(jpeg_buf)
 
 
 # Backwards-compatible alias (cli.py imports this name)

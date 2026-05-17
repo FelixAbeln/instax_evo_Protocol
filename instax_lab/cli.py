@@ -477,5 +477,61 @@ def extract_captures(
     console.print(f"\n[bold green]Done.[/bold green] Extracted {len(extracted_total)} file(s) to {out}")
 
 
+@app.command("evo-history")
+def evo_history(
+    address: Optional[str] = typer.Option(None, "--address", "-a", help="Device address (default: auto-scan)"),
+    index: Optional[int] = typer.Option(None, "--index", "-i", help="Entry index to download (0-based); omit to list count"),
+    out_dir: Path = typer.Option(Path("captures"), "--out-dir", "-o", help="Directory to save downloaded JPEG"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """List or download images from the camera's print history.
+
+    Without --index: prints the total number of stored history entries.
+    With --index N: downloads that entry and saves it as history-N.jpg.
+    """
+    asyncio.run(_evo_history(address, index, out_dir, verbose))
+
+
+async def _evo_history(
+    address: Optional[str],
+    index: Optional[int],
+    out_dir: Path,
+    verbose: bool,
+):
+    cam = InstaxCamera(address=address, verbose=verbose)
+    try:
+        await cam.connect()
+        console.print(f"Connected to [bold]{cam.address}[/bold]")
+
+        # get_status() seeds image_size / camera strings used elsewhere
+        await cam.get_status()
+
+        if index is None:
+            # List mode
+            count = await cam.get_history_count()
+            console.print(f"  History entries: [bold cyan]{count}[/bold cyan]")
+            if count:
+                console.print("  Use [bold]--index N[/bold] (0-based) to download an entry.")
+        else:
+            # Download mode
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = _unique_output_path(out_dir, f"history-{index}.jpg")
+
+            console.print(f"  Downloading history entry {index} ...")
+            jpeg_data = await cam.download_history_image(index)
+
+            out_path.write_bytes(jpeg_data)
+            console.print(
+                f"  [bold green]Saved:[/bold green] {out_path} "
+                f"({len(jpeg_data) / 1024:.1f} KB)"
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    finally:
+        await cam.disconnect()
+
+
 if __name__ == "__main__":
     app()
