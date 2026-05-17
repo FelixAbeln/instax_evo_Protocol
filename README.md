@@ -1,12 +1,315 @@
 # instax-evo-lab
 
-Reverse-engineering the **Fujifilm Instax Mini Evo BLE print protocol**.
+Reverse-engineering the **Fujifilm Instax Evo BLE protocol** — print, live view,
+flash control, and automatic image transfer back to PC, all over Bluetooth without
+the official app.
 
-This project documents the full BLE protocol used by the Instax Evo camera family
-and provides a working Python implementation that can print images directly from a PC
-over Bluetooth — no official app required.
+**Fully working on Gen 2 — Instax Evo Wide (FI028):**
+- Print images over BLE → film ejects ✅
+- Live view — wireless viewfinder at ~20 fps ✅
+- Remote shutter — take a photo from the PC; image transfers back automatically ✅
+- Flash control (Auto / On / Off) while live view is running ✅
 
-**Status:** Physical print confirmed on Gen 1 Mini Evo (FI019). Film ejected, image visible.
+**Partially working on Gen 1 — Instax Mini Evo (FI019):**
+- Print ✅ — same protocol, different image dimensions (600 × 800 px portrait)
+- Live view ⚠️ — frames confirmed in initial tests; not yet stable
+- Image transfer back ❌ — `(88,xx)` causes camera disconnect; `(82,10/20/21/22)` untested
+
+---
+
+## Key protocol discoveries
+
+### Two BLE profiles, two completely different protocols
+
+Every Instax Evo camera advertises **two simultaneous BLE profiles** with different MAC address prefixes:
+
+| Profile | Address prefix | Protocol | Used by |
+|---|---|---|---|
+| **IOS** | `FA:AB:BC:xx:xx:xx` | Link protocol — `41 62` framed packets | iOS app, javl/InstaxBLE, **this project** |
+| **Android** | `E0:48:24:xx:xx:xx` | Legacy binary — `16 xx` / `17 xx` writes | Android app only |
+
+Both profiles expose **the same GATT service and characteristic UUIDs**, which makes
+the Android profile look deceptively similar until you look at the packet content.
+The IOS profile is the correct target for everything in this project.
+
+### Packet framing (IOS / Link protocol)
+
+```
+Request  (phone → camera):  41 62  [len: uint16 BE]  [op1]  [op2]  [payload...]  [checksum]
+Response (camera → phone):  61 42  [len: uint16 BE]  [op1]  [op2]  [payload...]  [checksum]
+```
+
+- `41 62` = ASCII `"Ab"` — `61 42` = ASCII `"aB"` (case-flipped on response)
+- `len` = total packet bytes including the 2-byte header and 1-byte checksum
+- `checksum` = `(255 - sum(all_preceding_bytes)) & 255`
+- Minimum packet (no payload): 7 bytes — `41 62 00 07 [op1] [op2] [cs]`
+- Packets > ~182 bytes are split across multiple BLE write-without-response calls
+
+```python
+def make_packet(op1: int, op2: int, payload: bytes = b'') -> bytes:
+    header = b'\x41\x62'
+    length = struct.pack('>H', 7 + len(payload))
+    body   = header + length + bytes([op1, op2]) + payload
+    cs     = (255 - (sum(body) & 255)) & 255
+    return body + bytes([cs])
+```
+
+### Full print sequence (confirmed working, both FI019 and FI028)
+
+```
+op=(0x00,0x00)  []                              SUPPORT_FUNCTION_AND_VERSION_INFO (hello)
+op=(0x00,0x01)  [InfoType]                      DEVICE_INFO_SERVICE (model, serial, film size)
+op=(0x00,0x02)  [0x01]                          BATTERY_INFO
+op=(0x00,0x02)  [0x02]                          PRINTER_FUNCTION_INFO → photos_left
+
+op=(0x10,0x00)  [img_size: 4B BE]               PRINT_IMAGE_DOWNLOAD_START
+× N chunks:
+op=(0x10,0x01)  [seq: 4B BE] [900 bytes]        PRINT_IMAGE_DOWNLOAD_DATA  ← ACK each chunk
+op=(0x10,0x02)  []                              PRINT_IMAGE_DOWNLOAD_END
+
+op=(0x10,0x80)  []                              PRINT_IMAGE  ← film ejects here
+    ↳ response payload: [0x00, 0x0C]  (0x0C = print initiated)
+
+op=(0x00,0x02)  [0x02]                          PRINTER_FUNCTION_INFO  (post-print, photos_left--)
+```
+
+- Each chunk is **900 bytes of image data** prefixed by a **4-byte big-endian sequence number** (total 904-byte payload)
+- The last chunk is zero-padded to 900 bytes
+- Every `PRINT_IMAGE_DOWNLOAD_DATA` must be ACKed by the camera before the next is sent
+- `PRINT_IMAGE` (0x10, 0x80) is the only command that causes physical film ejection
+
+### Live view (confirmed, Evo Wide FI028)
+
+```
+op=(0x80,0x15)  [17×0x00]                       LIVE_VIEW_PREPARE
+op=(0x82,0x00)  [0x00]                           open pull session (slot 0)
+
+loop:
+    phone → cam: op=(0x82,0x01)  []              pull request
+    cam → phone: op=(0x82,0x01)  [2B][3B][JPEG…] one complete JPEG ~1 KB
+
+    if camera sends (0x82,0x02):                 shutter fired — download inline
+        ack (82,02) → run auto-transfer → sleep 2 s → reopen (82,00) → resume
+```
+
+~20 fps, JPEG at payload[5:], MTU=247 → 5 ATT notifications per frame.
+The pull loop stays open across a shutter fire — no "session stopped / restarting" interruption.
+
+### Auto-transfer after shutter (confirmed, Evo Wide FI028)
+
+When the shutter fires the camera signals readiness via `(82,10/20/21/22)`:
+
+```
+phone → cam: (82,10) [0x00]        IMG_HIST_QUERY
+cam → phone: (82,10) [0x00]        ACK
+
+loop until READY (~4–5 s encode time):
+    phone → cam: (82,20) []
+    cam → phone: (82,20) [0x02]    not ready
+
+cam → phone: (82,20) [0x00][0x02][total_size:4B BE][chunk_size:4B BE]   READY
+
+for chunk_idx in range(num_chunks):  # phone requests, camera responds
+    phone → cam: (82,21) [chunk_idx:4B BE]
+    cam → phone: (82,21) [status:1B][chunk_idx:4B BE][jpeg…]
+
+phone → cam: (82,22)               IMG_HIST_END
+```
+
+~22 chunks at 9 749 B/chunk for a ~214 KB JPEG. Response header is 5 bytes (`cp[5:]`).
+
+### Flash control (confirmed, Evo Wide FI028)
+
+Sent any time — including during live view — without interrupting the pull loop:
+
+```
+op=(0x80,0x11)  [0x0b, 0x02, value, 0x00, 0x00, 0x00]
+    value: 0x00 = Auto   0x01 = On   0x02 = Off
+```
+
+### Image format the camera expects
+
+| Model | Film | Dimensions | Orientation | JPEG size limit |
+|---|---|---|---|---|
+| Mini Evo (FI019) | Instax Mini | 600 × 800 px | Portrait | ≤ 105 KB |
+| Evo Wide (FI028) | Instax Wide | 1260 × 840 px | Landscape | ≤ 105 KB |
+
+### Key opcodes
+
+| op1 | op2 | Name | Notes |
+|---|---|---|---|
+| 0x00 | 0x00 | `SUPPORT_FUNCTION_AND_VERSION_INFO` | Hello — first packet every session |
+| 0x00 | 0x01 | `DEVICE_INFO_SERVICE` | Model, serial, film size (InfoType byte payload) |
+| 0x00 | 0x02 | `SUPPORT_FUNCTION_INFO` | Battery + film count (InfoType byte payload) |
+| 0x10 | 0x00 | `PRINT_IMAGE_DOWNLOAD_START` | Payload = image byte count as uint32 BE |
+| 0x10 | 0x01 | `PRINT_IMAGE_DOWNLOAD_DATA` | Payload = seq (4B BE) + 900B chunk |
+| 0x10 | 0x02 | `PRINT_IMAGE_DOWNLOAD_END` | No payload |
+| 0x10 | 0x80 | `PRINT_IMAGE` | No payload — triggers physical film ejection |
+| 0x80 | 0x11 | `CAMERA_SETTINGS_SET` | Flash: reg_id=0x0b, values 0x00/01/02 = Auto/On/Off |
+| 0x80 | 0x15 | `LIVE_VIEW_PREPARE` | Send before opening (82,00) pull session |
+| 0x82 | 0x00 | `LIVE_VIEW_OPEN` | Open pull session (slot 0) |
+| 0x82 | 0x01 | `LIVE_VIEW_FRAME` | Pull one JPEG frame; spontaneous close = (82,02) |
+| 0x82 | 0x02 | `LIVE_VIEW_CLOSE` | Close session — also sent spontaneously by camera after shutter |
+| 0x82 | 0x10 | `IMG_HIST_QUERY` | Initiate auto-transfer after shutter |
+| 0x82 | 0x20 | `IMG_HIST_POLL` | Poll readiness; `[0x02]` = not ready, `[0x00][0x02][size][chunk]` = ready |
+| 0x82 | 0x21 | `IMG_HIST_CHUNK` | Phone requests chunk by index; camera responds with data |
+| 0x82 | 0x22 | `IMG_HIST_END` | Close transfer session |
+| 0x88 | 0x00 | `IMAGE_TRANSFER_START` | Share-button pull (Gen 2 only — Gen 1 disconnects) |
+
+### InfoType values (payload byte for 0x00,0x01 and 0x00,0x02)
+
+| Value | Name | Response content |
+|---|---|---|
+| 0x00 | `IMAGE_SUPPORT_INFO` | Two uint16 BE = (width, height) |
+| 0x01 | `BATTERY_INFO` | `[state][pct]` — state 0=critical…4=full, pct 0–100 |
+| 0x02 | `PRINTER_FUNCTION_INFO` | `status_byte`: low 4 bits = photos left, bit 7 = charging |
+| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: transfers][uint32 BE: prints_made]` — digital transfers + physical ejections |
+| 0x04 | `CAMERA_FUNCTION_INFO` | 16B; byte[2]=0x01 when camera is in transfer-ready state (user pressed Share) |
+
+### GATT UUIDs (shared across all models and both profiles)
+
+| UUID | Role |
+|---|---|
+| `70954782-2d83-473d-9e5f-81e1d02d5273` | Primary service |
+| `70954783-2d83-473d-9e5f-81e1d02d5273` | **Write characteristic** |
+| `70954784-2d83-473d-9e5f-81e1d02d5273` | **Notify characteristic** |
+
+### Image modes (client-side only)
+
+The camera has no on-device filter processing. All effects are applied in Python
+before the JPEG is sent. The camera always receives raw pixel data.
+
+| Mode | Implementation | Effect |
+|---|---|---|
+| Normal | — | No change |
+| Rich | `ImageEnhance.Color(img).enhance(1.5)` | Saturation ×1.5 — vivid colours |
+
+---
+
+## Relation to javl/InstaxBLE
+
+The [javl/InstaxBLE](https://github.com/javl/InstaxBLE) library documents and implements
+the same Link protocol for **Instax Link printers** (dedicated printer hardware, no camera).
+This project extends and adapts that work for the **Instax Evo** camera line.
+
+### What was reused
+
+- GATT service/characteristic UUIDs
+- Packet framing (`41 62` header, uint16 BE length, XOR checksum)
+- Opcode table (`EventType`) and `InfoType` values
+- 900-byte chunk size for Mini film
+
+### What is different or new
+
+| Aspect | javl/InstaxBLE (Link printers) | This project (Evo cameras) |
+|---|---|---|
+| **BLE profiles** | Single IOS profile | Two simultaneous profiles; must target IOS specifically |
+| **Pairing** | Not required | Required on Gen 1 — passkey on camera display; Gen 2 bonds silently |
+| **Image preparation** | Caller provides image | Auto-resize to film dimensions, binary-search JPEG quality to ≤ 105 KB |
+| **Filters** | Not in scope | Rich mode via PIL (client-side, no camera command needed) |
+| **Print safety** | Immediate print | `--enable-print` flag required; default is data-only (no ejection) |
+| **Post-print poll** | Not polled | `PRINTER_FUNCTION_INFO` re-polled; `photos_left` updated |
+| **Live view** | Not applicable | Full pull loop at ~20 fps; seamless shutter-fire + auto-transfer inline |
+| **Image transfer back** | Not applicable | Auto-transfer `(82,10/20/21/22)` + Share-button `(88,xx)` pull (Gen 2) |
+| **Flash control** | Not applicable | `(80,11)` reg_id=0x0b during live view without interruption |
+| **Platform** | macOS / Linux primary | Windows 11 + bleak, exclusively |
+
+---
+
+## Camera compatibility
+
+| Model | ID | Gen | Film | Status |
+|---|---|---|---|---|
+| Instax Evo Wide | FI028 | 2 | Wide 1260×840 | ✅ Print, live view, flash, auto-transfer all working |
+| Instax Mini Evo | FI019 | 1 | Mini 600×800 | ✅ Print working; live view partial; transfer back not working |
+| Instax Mini Evo Cinema | unknown | 3 | Mini | ❓ Not in possession; assumed same Link protocol |
+| Instax Mini/Square/Wide Link | various | — | Mini/Square/Wide | Handled by javl/InstaxBLE; same framing, no pairing needed |
+
+---
+
+## Setup
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**First-time camera pairing (Gen 1 Mini Evo):** Open Windows Bluetooth settings → "Add device". Pair with `INSTAX-xxxxxxx (IOS)` and enter the passkey shown on the camera. Only needed once.
+
+**Gen 2 Evo Wide:** bonds automatically on first connect — no manual pairing step needed.
+
+---
+
+## Usage
+
+```powershell
+# Launch the GUI (scan, connect, live view, flash, print, download):
+python -m instax_lab
+```
+
+The GUI handles scanning, connecting, live view, remote shutter, flash control, and
+image download. See [docs/protocol.md](docs/protocol.md) for the full protocol reference.
+
+---
+
+## What this does
+
+- **GUI application** — scan, connect, and control any supported Instax Evo camera
+- **Print images** over BLE → film ejects (both FI019 and FI028)
+- **Live view** — wireless viewfinder at ~20 fps in the GUI window
+- **Remote shutter** — trigger the camera from the PC; transferred image saved to `captures/image_transfer/`
+- **Auto-transfer** — when the camera shutter fires, the JPEG is automatically downloaded inline without interrupting live view
+- **Share-button pull** — download an image the user selected on the camera (Gen 2 only)
+- **Flash control** — switch Auto / On / Off while live view is running
+- **Status polling** — battery level, film remaining, transfer-ready flag
+- Keeps captured images in `captures/image_transfer/` with timestamped filenames
+
+See [docs/protocol.md](docs/protocol.md) for the full reverse-engineered protocol specification.
+
+---
+
+## Requirements
+
+- Windows 10 / 11
+- Python 3.11+
+- Bluetooth adapter (built-in or USB)
+- Instax Evo Wide (FI028) or Mini Evo (FI019)
+
+---
+
+## Credits and prior work
+
+This project is based on the BLE protocol documented and implemented in
+**[javl/InstaxBLE](https://github.com/javl/InstaxBLE)** (MIT licence).
+The packet framing, opcode table, and GATT UUIDs were taken from that project
+and cross-referenced against our own HCI captures.
+
+### What we reused from javl/InstaxBLE
+
+| Component | Source |
+|---|---|
+| GATT service/characteristic UUIDs | Taken directly |
+| Packet format (`41 62` header, uint16 BE length, XOR checksum) | Taken directly |
+| Opcode table (`EventType`) — `PRINT_IMAGE_DOWNLOAD_*`, `PRINT_IMAGE`, etc. | Taken directly |
+| `InfoType` values for battery, film count, image size queries | Taken directly |
+| 900-byte chunk size for Mini film | Taken directly |
+
+### What is different / extended
+
+| Aspect | javl/InstaxBLE (Mini/Square/Wide Link) | This project (Instax Evo) |
+|---|---|---|
+| **Target device** | Instax Link printers (dedicated printer hardware) | Instax Evo Wide + Mini Evo (hybrid camera + printer) |
+| **BLE profiles** | Single IOS profile | Two simultaneous profiles: IOS (Link protocol) + Android (legacy binary) |
+| **Pairing** | Not required | Required on Gen 1; Gen 2 bonds silently |
+| **Live view** | Not applicable | Full `(82,xx)` pull loop at ~20 fps with inline shutter-fire handling |
+| **Auto-transfer** | Not applicable | `(82,10/20/21/22)` chunk protocol (request-response, phone initiates) |
+| **Share-button pull** | Not applicable | `(88,xx)` chunk protocol (Gen 2 only) |
+| **Flash control** | Not applicable | `(80,11)` register write during live view |
+| **Image preparation** | Caller provides pre-sized image | Built-in: auto-resize + JPEG quality binary-search to ≤ 105 KB |
+| **Filters / modes** | Not in scope | Rich mode: PIL `ImageEnhance.Color(img).enhance(1.5)` |
+| **Print safety** | Print triggers immediately | `--enable-print` flag required to eject film |
+| **Windows support** | Primary target is macOS/Linux | Tested exclusively on Windows 11 with bleak |
 
 ---
 
