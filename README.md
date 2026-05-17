@@ -435,14 +435,6 @@ before the JPEG is sent. The camera always receives raw pixel data.
 | Normal | — | No change |
 | Rich | `ImageEnhance.Color(img).enhance(1.5)` | Saturation ×1.5 — vivid colours |
 
-### Known gap — print history not updated
-
-After a successful print the image does not appear in the Instax app's
-"previously printed images" gallery. The official app likely sends an additional
-BLE command (possibly in the `0x84` log family or `0x80` settings family) to register
-the print. The opcode has not yet been captured. A new official-app HCI capture
-is needed to identify it.
-
 ---
 
 ## Relation to javl/InstaxBLE
@@ -567,7 +559,6 @@ and cross-referenced against our own HCI captures.
 | **Post-print status** | Not polled | `PRINTER_FUNCTION_INFO` re-polled after print; `photos_left` updated |
 | **Print log** | None | Appends to `captures/print-log.jsonl` on every run |
 | **Windows support** | Primary target is macOS/Linux | Tested exclusively on Windows 11 with bleak |
-| **Protocol research** | Complete for Link printers | IOS profile fully working; print-history registration command still under investigation |
 
 ---
 
@@ -728,9 +719,8 @@ Every `evo-print` run appends a line to `captures/print-log.jsonl`:
 
 ## Known limitations
 
-- **Print history not updated** — after printing, the image does not appear in the Instax app's "previously printed images" gallery. There is likely a missing BLE command to register the print in the camera's history log. Requires a new official-app capture to identify. See [docs/protocol.md](docs/protocol.md#known-gaps--commands-not-yet-identified).
 - **Windows BLE addresses** — on Windows, BLE addresses may appear as UUID-like device IDs rather than `AA:BB:CC:DD:EE:FF` format. Use the exact string printed by `scan`.
-- **Gen 2 / Evo Wide untested live** — protocol is decoded from HCI captures but no live print has been attempted.
+- **Gen 1 Mini Evo live view** — frames confirmed in initial tests but session not yet stable; root cause under investigation.
 
 ---
 

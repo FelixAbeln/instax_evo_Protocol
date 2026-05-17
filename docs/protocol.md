@@ -438,6 +438,7 @@ text = response[9:9 + str_len].decode('ascii')
 ## Gen 2 (Evo Wide) — Observed BLE Session
 
 From 19-51-52 HCI capture. All 4 captured BLE connections are **identical** — no session state changes.
+All behaviours below have been confirmed by **live testing** on `FA:AB:BC:1D:0A:7B` (2026-05-17).
 
 ### Connection sequence
 
