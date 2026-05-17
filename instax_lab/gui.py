@@ -88,6 +88,7 @@ class CameraBackend:
 
         self._connected  = False
         self._liveview   = False
+        self._lv_running = False   # True while _liveview_loop task is executing
         self._ble_busy   = False   # True while a (88,xx) or (10,xx) op is running
         self._stop       = False
         # Runtime flag: set False after a (88,xx) timeout so we stop retrying.
@@ -110,8 +111,9 @@ class CameraBackend:
     def _run(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._rx    = asyncio.Queue()
-        self._cmd_q = asyncio.Queue()
+        self._rx         = asyncio.Queue()
+        self._cmd_q      = asyncio.Queue()
+        self._ble_op_lock = asyncio.Lock()   # serialises per-frame BLE exchanges
         self._loop.run_until_complete(self._main())
 
     # ── thread-safe command sender (called from GUI thread) ───────────────────
@@ -202,6 +204,10 @@ class CameraBackend:
                 asyncio.create_task(self._liveview_loop())
             elif cmd == "liveview_stop":
                 self._liveview = False
+            elif cmd == "set_flash":
+                asyncio.create_task(self._set_flash(msg["value"]))
+            elif cmd == "download_photo":
+                asyncio.create_task(self._download_photo())
             elif cmd == "print_image":
                 asyncio.create_task(
                     self._print_image(msg["path"], msg.get("enable_print", False))
@@ -248,15 +254,21 @@ class CameraBackend:
                         f"MTU={mtu} — BLE stack not ready yet, will retry"
                     )
 
-                try:
-                    await self._client.pair()
-                    self._log("Paired OK")
-                except Exception as e:
-                    self._log(f"Pair skipped: {e}")
+                # MTU=247 means Windows already has bond keys and the session is
+                # encrypted — do NOT call pair() here.  Calling pair() on an
+                # already-bonded Wide Evo triggers a full re-pairing handshake
+                # that the camera rejects by dropping the connection immediately.
+                # The camera must be paired once via Windows Bluetooth settings;
+                # after that the WinRT stack re-uses the cached bond keys
+                # automatically and no explicit pair() call is needed.
 
-                # Give the BLE stack time after pairing before GATT
-                # characteristics are queryable on Windows (especially Gen 1).
-                await asyncio.sleep(3.0)
+                # Brief settle for WinRT GATT cache to populate.
+                await asyncio.sleep(1.0)
+
+                # If the camera dropped the link, fail fast instead of burning
+                # 3× GATT retries at 2 s each.
+                if not self._client.is_connected:
+                    raise RuntimeError("Camera disconnected before subscribe")
 
                 # Retry start_notify up to 3× in case GATT isn't ready yet.
                 for disc in range(3):
@@ -296,7 +308,8 @@ class CameraBackend:
                         pass
                     self._client = None
                 # Longer pause on low-MTU retry so the BLE stack can settle.
-                delay = 5.0 if "MTU=" in str(e) else 3.0
+                # Also wait longer when the camera dropped the link after pair().
+                delay = 5.0 if ("MTU=" in str(e) or "after pair" in str(e)) else 3.0
                 await asyncio.sleep(delay)
 
         if not self._connected:
@@ -642,7 +655,8 @@ class CameraBackend:
         """
         while self._ble_busy:
             await asyncio.sleep(0.1)
-        self._liveview = True
+        self._liveview   = True
+        self._lv_running = True
         self._log("Live view: starting ...")
         pull_pkt = make_packet(0x82, 0x01)
 
@@ -672,14 +686,15 @@ class CameraBackend:
 
                 # ── continuous pull ───────────────────────────────────────────
                 while self._liveview and self._connected and not session_done:
-                    await self._write(pull_pkt)
+                    async with self._ble_op_lock:
+                        await self._write(pull_pkt)
 
-                    try:
-                        op1, op2, payload = await self._recv_frame(timeout=5.0)
-                    except asyncio.TimeoutError:
-                        # Camera stopped responding — close and reopen the session.
-                        session_done = True
-                        break
+                        try:
+                            op1, op2, payload = await self._recv_frame(timeout=5.0)
+                        except asyncio.TimeoutError:
+                            # Camera stopped responding — close and reopen the session.
+                            session_done = True
+                            break
 
                     if op1 == 0x82 and op2 == 0x01:
                         if len(payload) <= 5:
@@ -701,8 +716,38 @@ class CameraBackend:
                             self._ui("liveview_frame", data=frame)
 
                     elif op1 == 0x82 and op2 == 0x02:
-                        self._log("Live view: camera closed session")
-                        session_done = True
+                        if frame_count > 0 and self._liveview and self._connected:
+                            # Camera fired the shutter and terminated the pull
+                            # stream.  Acknowledge, download the photo, then
+                            # reopen the pull stream — all without leaving this
+                            # inner loop so the LV session looks seamless.
+                            self._log(
+                                f"Live view: shutter fired"
+                                f" ({frame_count} frame(s)) — downloading …"
+                            )
+                            await self._write(make_packet(0x82, 0x02, b"\x00"))
+                            try:
+                                await self._check_82_transfer()
+                            except Exception as e:
+                                self._log(f"Auto-transfer error: {e}")
+                            # Give the camera time to recover before new LV session.
+                            await asyncio.sleep(2.0)
+                            await self._flush_rx()
+                            await self._write(make_packet(0x82, 0x00, b"\x00"))
+                            try:
+                                rp1, rp2, _ = await self._recv_frame(timeout=3.0)
+                            except asyncio.TimeoutError:
+                                rp1, rp2 = None, None
+                            if rp1 == 0x82 and rp2 == 0x00 and self._liveview:
+                                frame_count = 0
+                                consecutive_empty = 0
+                                continue  # resume pulling frames
+                            # Reopen failed — let the outer loop retry.
+                            frame_count = 0  # prevent outer loop re-transfer
+                            session_done = True
+                        else:
+                            self._log("Live view: camera closed session")
+                            session_done = True
                         break
 
                     # Instant non-blocking drain: check if (82,02) has already
@@ -750,13 +795,197 @@ class CameraBackend:
                         f"Live view: session ended after {frame_count} frame(s)"
                         f"  [{total_frames} total]"
                     )
+                    # Check for auto-transferred image (remote shutter during live view).
+                    # Camera needs ~4-5 s to encode; _check_82_transfer polls with timeout.
+                    if self._liveview and self._connected:
+                        try:
+                            await self._check_82_transfer()
+                        except Exception as e:
+                            self._log(f"Auto-transfer error: {e}")
                     # Reopen immediately — no artificial gap between sessions.
 
         except Exception as e:
             self._log(f"Live view error: {e}")
 
-        self._liveview = False
+        self._liveview   = False
+        self._lv_running = False
         self._log(f"Live view stopped  ({total_frames} frame(s) total)")
+
+    async def _check_82_transfer(self):
+        """Check for and receive an auto-transferred image via (82,10/20/21/22).
+
+        Called after a live view session that delivered frames.  The camera
+        takes ~4-5 s to encode the photo after the shutter fires, so we poll
+        (82,20) with a 500 ms interval until it reports READY or 30 s elapse.
+
+        Protocol (confirmed from btsnoop capture):
+          phone→cam (82,10) 00                      IMG_HIST_QUERY
+          cam→phone (82,10) 00                      ACK
+          phone→cam (82,20)                         IMG_HIST_POLL (repeat ~500 ms)
+          cam→phone (82,20) [02]                    not ready
+          cam→phone (82,20) [00 02 total:4B chunk_sz:4B]  READY
+          phone→cam (82,21) [idx:4B BE]             request chunk N
+          cam→phone (82,21) [status:1B][idx:4B BE][jpeg…]  chunk N data
+          … (next request is the implicit ACK) …
+          phone→cam (82,22)                         IMG_HIST_END
+          cam→phone (82,22) [00]                    done
+        """
+        # Block the poll loop so its (0x00,0x02) responses don't land in our
+        # receive queue while we're waiting for (82,21) chunk frames.
+        self._ble_busy = True
+        try:
+            await self._flush_rx()
+
+            # Step 1: query
+            await self._write(make_packet(0x82, 0x10, b"\x00"))
+            try:
+                o1, o2, _ = await self._recv_frame(timeout=3.0)
+            except asyncio.TimeoutError:
+                self._log("Auto-transfer: no response to IMG_HIST_QUERY — skipping")
+                return
+            if not (o1 == 0x82 and o2 == 0x10):
+                self._log("Auto-transfer: unexpected response to IMG_HIST_QUERY — skipping")
+                return
+
+            # Step 2: poll until ready (max 60 × 500 ms = 30 s)
+            total_size = 0
+            chunk_size = 0
+            ready = False
+            for attempt in range(60):
+                await self._write(make_packet(0x82, 0x20))
+                try:
+                    o1, o2, p = await self._recv_frame(timeout=3.0)
+                except asyncio.TimeoutError:
+                    self._log("Auto-transfer: poll timeout — giving up")
+                    return
+                if not (o1 == 0x82 and o2 == 0x20):
+                    self._log("Auto-transfer: unexpected opcode during poll — skipping")
+                    return
+                if len(p) >= 10:
+                    # READY payload: [status][0x02][total:4B BE][chunk_sz:4B BE]
+                    total_size = struct.unpack_from(">I", p, 2)[0]
+                    chunk_size = struct.unpack_from(">I", p, 6)[0]
+                    ready = True
+                    self._log(
+                        f"Auto-transfer: READY  {total_size} B"
+                        f"  chunk={chunk_size} B"
+                        f"  ~{-(-total_size // chunk_size)} chunks"
+                    )
+                    break
+                # not ready — [0x02] single byte response
+                await asyncio.sleep(0.5)
+
+            if not ready:
+                self._log("Auto-transfer: image not ready after 30 s — skipping")
+                return
+
+            # Step 3: request each chunk.
+            # P→C: (82,21)[idx:4B]   C→P: (82,21)[status:1B][idx:4B][data…]
+            # The next request serves as the implicit ACK for the previous chunk.
+            num_chunks = -(-total_size // chunk_size)  # ceiling division
+            self._ui("transfer_start")
+            self._ui(
+                "transfer_meta",
+                total=total_size,
+                chunks=num_chunks,
+                timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            jpeg = bytearray()
+            transfer_ok = True
+            for chunk_idx in range(num_chunks):
+                await self._write(make_packet(0x82, 0x21, struct.pack(">I", chunk_idx)))
+                # Skip any unsolicited frames that arrive before the chunk response.
+                got_chunk = False
+                for _ in range(10):
+                    try:
+                        o1, o2, cp = await self._recv_frame(timeout=10.0)
+                    except asyncio.TimeoutError:
+                        self._log("Auto-transfer: chunk timeout — transfer incomplete")
+                        transfer_ok = False
+                        break
+                    if o1 == 0x82 and o2 == 0x21:
+                        # [1B status][4B idx echo][JPEG data…]
+                        if len(cp) >= 5:
+                            jpeg.extend(cp[5:])
+                        got_chunk = True
+                        break
+                    self._log(
+                        f"Auto-transfer: skipping unsolicited frame"
+                        f" ({o1:#04x},{o2:#04x})"
+                    )
+                if not got_chunk:
+                    transfer_ok = False
+                    break
+                self._ui("transfer_progress", chunk=chunk_idx, total_chunks=num_chunks)
+
+            # Step 4: close the transfer session
+            await self._write(make_packet(0x82, 0x22))
+            try:
+                await self._recv_frame(timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
+
+            if len(jpeg) > 100:
+                self._log(f"Auto-transfer complete: {len(jpeg)} B received")
+                soi = bytes(jpeg).find(b"\xff\xd8")
+                if soi < 0:
+                    self._log("Auto-transfer: no JPEG SOI — discarding")
+                else:
+                    jpeg_bytes = bytes(jpeg[soi:])
+                    out_dir = Path("captures/image_transfer")
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    ts = time.strftime("%Y-%m-%d_%H%M%S")
+                    out = out_dir / f"autotransfer_{ts}.jpg"
+                    out.write_bytes(jpeg_bytes)
+                    self._log(f"Saved {len(jpeg_bytes):,} B → {out}")
+                    self._ui(
+                        "transfer_done",
+                        path=str(out),
+                        size=len(jpeg_bytes),
+                        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+                    )
+            else:
+                self._log("Auto-transfer: too few bytes — discarded")
+        finally:
+            self._ble_busy = False
+
+    async def _set_flash(self, value: int):
+        """Send SET_INFO flash mode.  value: 0=AUTO, 1=ON, 2=OFF."""
+        if not self._connected:
+            return
+        async with self._ble_op_lock:
+            await self._flush_rx()
+            payload = bytes([0x0b, 0x02, value, 0x00, 0x00, 0x00])
+            await self._write(make_packet(0x80, 0x11, payload))
+            try:
+                await self._recv_frame(timeout=2.0)
+                name = {0: "AUTO", 1: "ON", 2: "OFF"}.get(value, str(value))
+                self._log(f"Flash: {name}")
+            except asyncio.TimeoutError:
+                self._log("Flash set: no ACK")
+
+    async def _download_photo(self):
+        """Trigger an immediate photo download via the (82,10/20/21/22) protocol."""
+        if not self._connected:
+            return
+        lv_was_active = self._lv_running
+        # Signal liveview loop to stop, then wait for it to fully exit so the
+        # RX queue is clean before we send IMG_HIST_QUERY.
+        self._liveview = False
+        wait_s = 0.0
+        while self._lv_running and wait_s < 8.0:
+            await asyncio.sleep(0.1)
+            wait_s += 0.1
+        if self._lv_running:
+            self._log("Download photo: live view didn't stop — proceeding anyway")
+        try:
+            await self._check_82_transfer()
+        except Exception as e:
+            self._log(f"Download photo error: {e}")
+        # Resume live view if it was active when Download Photo was clicked.
+        if lv_was_active and self._connected:
+            self._liveview = True
+            asyncio.create_task(self._liveview_loop())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -954,6 +1183,7 @@ class InstaxApp:
         self._liveview_win: tk.Toplevel | None = None
         self._liveview_lbl: tk.Label  | None = None
         self._liveview_ref = None
+        self._liveview_frame_data: bytes | None = None  # last raw JPEG received
         self._thumb_ref    = None
         self._img_w = 0
         self._img_h = 0
@@ -1199,11 +1429,6 @@ class InstaxApp:
             self._xfer_status_var.set(f"✓  {Path(msg['path']).name}")
             self._xfer_bar["value"] = self._xfer_bar["maximum"]
             self._show_thumb(msg["path"])
-            try:
-                with open(msg["path"], "rb") as f:
-                    self._update_liveview(f.read())
-            except Exception:
-                pass
 
         elif kind == "liveview_frame":
             self._update_liveview(msg["data"])
@@ -1306,7 +1531,51 @@ class InstaxApp:
         ttk.Button(
             btn_bar, text="Stop",
             command=lambda: self.backend.send_cmd("liveview_stop"),
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        # ── Flash control ─────────────────────────────────────────────────────
+        ttk.Separator(btn_bar, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=(0, 8), pady=4
+        )
+        ttk.Label(btn_bar, text="Flash:").pack(side=tk.LEFT, padx=(0, 4))
+        flash_var = tk.IntVar(value=0)
+
+        def _on_flash_change(*_):
+            self.backend.send_cmd("set_flash", value=flash_var.get())
+
+        flash_var.trace_add("write", _on_flash_change)
+        for label, val in (("AUTO", 0), ("ON", 1), ("OFF", 2)):
+            ttk.Radiobutton(
+                btn_bar, text=label, variable=flash_var, value=val,
+            ).pack(side=tk.LEFT)
+
+        # ── Capture / save buttons ────────────────────────────────────────────
+        ttk.Separator(btn_bar, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=(8, 8), pady=4
+        )
+        ttk.Button(
+            btn_bar, text="Download Photo",
+            command=lambda: self.backend.send_cmd("download_photo"),
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        def _save_frame():
+            data = self._liveview_frame_data
+            if not data:
+                messagebox.showinfo(
+                    "No frame", "No live view frame received yet.", parent=win
+                )
+                return
+            path = filedialog.asksaveasfilename(
+                title="Save live view frame",
+                parent=win,
+                defaultextension=".jpg",
+                filetypes=[("JPEG", "*.jpg *.jpeg"), ("All files", "*.*")],
+            )
+            if path:
+                with open(path, "wb") as fh:
+                    fh.write(data)
+
+        ttk.Button(btn_bar, text="Save Frame", command=_save_frame).pack(side=tk.LEFT)
 
         def _on_close():
             self.backend.send_cmd("liveview_stop")
@@ -1316,6 +1585,7 @@ class InstaxApp:
     def _update_liveview(self, data: bytes):
         if not self._liveview_lbl or not self._liveview_lbl.winfo_exists():
             return
+        self._liveview_frame_data = data   # keep latest JPEG for Save Frame
         try:
             img   = Image.open(BytesIO(data))
             win_w = self._liveview_win.winfo_width()  or 640

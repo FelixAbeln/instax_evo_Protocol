@@ -7,6 +7,34 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 
 ---
 
+## Protocol Coverage Status (as of 2026-05-17)
+
+All core behaviours for the **Instax Evo Wide (FI028, Gen 2)** are confirmed and
+implemented. Remaining unknowns are metadata registers and lifetime counters that
+have no effect on operation.
+
+| Feature | Status | Opcode(s) |
+|---|---|---|
+| BLE connect / handshake | ✅ Confirmed | `(00,00)` + `(00,01)` info queries |
+| Status poll (battery, photos left, model) | ✅ Confirmed | `(00,02)` |
+| Transfer-ready flag detection | ✅ Confirmed | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
+| Share-button image pull | ✅ Confirmed | `(88,00…0b)` chunk request-response |
+| Live view (pull loop) | ✅ Confirmed | `(82,00/01/02)` |
+| Flash control | ✅ Confirmed | `(80,11)` reg_id=0x0b, values 0x00/01/02 |
+| Auto-transfer after shutter (inline) | ✅ Confirmed | `(82,10/20/21/22)` |
+| Inline transfer + seamless LV resume | ✅ Implemented | ack `(82,02)` → transfer → `(82,00)` reopen |
+| Print (sending JPEG to camera) | ⏳ Not implemented | `(80,xx)` print opcodes |
+| History log / stored image list | ⏳ Not explored | `(84,xx)` |
+| `(82,10/20/21/22)` via Share button | ❓ Unconfirmed | only observed after remote shutter |
+| Register semantics (0x0C, 0x13–0x1B) | ❓ Unknown | `(80,11)` read — values are 0x00/0x01 |
+| `DEVICE_INFO` strings 0x03/0x04/0x05 | ❓ Unknown | `(00,01)` InfoType 3–5 |
+| `CAMERA_FUNCTION_INFO` byte[0]/byte[1] | ❓ Unknown | 0x03/0x50 at rest, 0x02/0x32 after print |
+| `PRINT_HISTORY_INFO` second uint32 | ❓ Unknown | always 5 in captured sessions |
+| Secondary GATT service (`0x6387…`) | ❓ Unknown | possibly OTA / config |
+| Gen 3 Cinema (FI0xx) | ❓ Not in possession | assumed same Link protocol |
+
+---
+
 ## Key Insight: Two BLE Profiles, Two Protocols
 
 Every Instax camera with BLE advertises **two separate BLE profiles** simultaneously:
@@ -204,12 +232,16 @@ cross-referenced with the gen 2 Evo Wide HCI capture:
 | 0x80 | 0x00 | `CAMERA_SETTINGS` | Evo-specific camera setting write |
 | 0x80 | 0x01 | `CAMERA_SETTINGS_GET` | Evo-specific camera setting read |
 | 0x80 | 0x10 | *(Evo-specific)* | Read config register bank (gen 2 observed) |
-| 0x80 | 0x11 | *(Evo-specific)* | Read individual register (payload = reg ID + 4 zero bytes) |
+| 0x80 | 0x11 | *(Evo-specific)* | Read/write individual register. **Read:** payload `[reg_id][0x00×5]`; camera replies `[0x00][reg_id][value][0x00×3]`. **Write:** payload `[reg_id][0x02][value][0x00×3]`; camera replies `[0x00][reg_id][0x00×4]`. See [Flash Control](#flash-control--set_info-0x8011) for reg_id=0x0B (flash mode). |
 | 0x80 | 0x15 | `LIVE_VIEW_PREPARE` | Sent before `0x82,0x00`. Phone payload = 17×0x00. Camera response: Mini Evo = `[0xBF]` (1B); Wide Evo = 17B with byte[8]=0x32. |
 | 0x82 | 0x00 | `LIVE_VIEW_START` | Payload = `[1B slot_index]`; camera ACKs with `[slot_index]`. |
 | 0x82 | 0x01 | `LIVE_VIEW_FRAME` | Phone→cam: 0-byte payload (pull request). Cam→phone: `[2B chunk_idx=0x0001][3B frame_header][JPEG…]`. Each pull returns one **complete, fresh JPEG** of the current view (~20 fps). BLE fragmentation (bonded MTU 247): arrives as **5 ATT notifications** — 244+244+244+244+51 = 1027 bytes total. **JPEG starts at payload[5]** (after 2B chunk idx + 3B header). **Confirmed: 176 frames in 8.57 s (btsnoop), live view working on both FI019 and FI028 (2026-05-17).** |
 | 0x82 | 0x02 | `LIVE_VIEW_END` | Payload = `[1B slot_index]`; camera ACKs with `[0x00]`. |
-| 0x5 | 0x00 | `CAMERA_LOG_SUBTOTAL_START` | Digital photo-to-phone transfer count query (**NOT** physical print count) — **confirmed gen 2** |
+| 0x82 | 0x10 | `IMG_HIST_QUERY` | **Phone→cam:** `[0x00]` — initiates auto-transfer session after live view. **Cam→phone:** `[0x00]` — acknowledged. Sent immediately after the app acks the spontaneous `(82,02)` close (shutter fired); the camera has not yet finished encoding the photo at this point. |
+| 0x82 | 0x20 | `IMG_HIST_POLL` | **Phone→cam:** empty payload — polls whether the image is ready. **Cam→phone:** `[0x02]` = not ready (retry); `[0x00][0x02][total_size:4B BE][chunk_size:4B BE]` = READY. Poll at ~500 ms intervals; camera takes 4–5 s to encode a fresh photo. |
+| 0x82 | 0x21 | `IMG_HIST_CHUNK` | **Cam→phone (push):** `[chunk_idx:4B BE][jpeg_data…]` — camera pushes each chunk after the previous ACK. **Phone→cam (ack):** `[chunk_idx:4B BE]` — ACK for the received chunk. Camera pushes the next chunk after each ACK. |
+| 0x82 | 0x22 | `IMG_HIST_END` | **Phone→cam:** empty payload — phone signals all chunks received. **Cam→phone:** `[0x00]` — done. |
+| 0x84 | 0x00 | `CAMERA_LOG_SUBTOTAL_START` | Digital photo-to-phone transfer count query (**NOT** physical print count) — **confirmed gen 2** |
 | 0x84 | 0x01 | `CAMERA_LOG_SUBTOTAL_DATA` | |
 | 0x84 | 0x02 | `CAMERA_LOG_SUBTOTAL_CLEAR` | |
 | 0x84 | 0x03 | `CAMERA_LOG_DATE_START` | |
@@ -492,6 +524,55 @@ Decoded keepalive values from 19-51-52 capture:
 
 ---
 
+## Flash Control — SET_INFO (0x80,0x11), reg_id=0x0B (confirmed gen 2, bugreport 0517b)
+
+The Wide Evo (FI028) exposes a flash mode register via the `SET_INFO` op `(0x80,0x11)`. The phone reads the current setting at startup and writes it back when the user changes the flash toggle in the app.
+
+### Register access format
+
+```
+READ  phone→cam: (0x80,0x11)  payload=[reg_id][0x00×5]
+      cam→phone: (0x80,0x11)  payload=[0x00][reg_id][current_value][0x00×3]
+
+WRITE phone→cam: (0x80,0x11)  payload=[reg_id][0x02][new_value][0x00×3]
+      cam→phone: (0x80,0x11)  payload=[0x00][reg_id][0x00×4]   (ACK — does not echo new value)
+```
+
+### Flash mode (reg_id=0x0B)
+
+| `new_value` | Flash setting |
+|---|---|
+| `0x00` | AUTO |
+| `0x01` | ON (forced flash) |
+| `0x02` | OFF (no flash) |
+
+**Startup read:** Phone sends `[0x0b 0x00 0x00 0x00 0x00 0x00]`; camera replies with `[0x00 0x0b <current> 0x00 0x00 0x00]`.
+
+**Example writes from bugreport 0517b:**
+```
+Flash OFF:  phone→cam (0x80,0x11) payload=0b 02 02 00 00 00
+Flash ON:   phone→cam (0x80,0x11) payload=0b 02 01 00 00 00
+Flash AUTO: phone→cam (0x80,0x11) payload=0b 02 00 00 00 00
+```
+
+All three flash changes happened during an ongoing live view session — the BLE connection stays up and the live view session does not need to be interrupted to change flash.
+
+### Other known registers (startup read-only, semantics TBD)
+
+| reg_id | startup value (Wide Evo) | Notes |
+|---|---|---|
+| 0x0B | 0x00 | Flash mode (AUTO default) — **confirmed** |
+| 0x0C | 0x00 | Unknown |
+| 0x13 | 0x00 | Unknown |
+| 0x14 | 0x00 | Unknown |
+| 0x15 | 0x00 | Unknown |
+| 0x16 | 0x32 = 50 | Possibly total prints (matches `CAMERA_FUNCTION_INFO` byte[1]) |
+| 0x17 | 0x01 | Unknown |
+| 0x18–0x1A | 0x00 | Unknown |
+| 0x1B | 0x01 | Unknown |
+
+---
+
 ## Phone-Initiated Image Transfer — 0x88 Pull Protocol (confirmed gen 2)
 
 When the user presses the **share button** on the camera, a flag in the
@@ -759,20 +840,31 @@ loop until user stops or camera sends (82,02):
     cam → phone: op=(0x82,0x01)  [2B chunk_idx][3B header][JPEG…]    response
         # Use _recv_frame() — accumulates 5 ATT notifications (244×4+51) into 1027-byte frame
         # JPEG data starts at payload[5] — skip 2B chunk_idx + 3B header field
-        # After emitting frame: wait 100 ms for spontaneous (82,02) from camera
-        # If (82,02) received: end session — do NOT try to reopen
+        # After emitting frame: drain _rx for a spontaneous (82,02) without blocking
 
-phone → cam: op=(0x82,0x02)  payload=[0x00]       close
-cam → phone: op=(0x82,0x02)  [0x00]               ACK
+    if (82,02) received (shutter fired, frame_count > 0):
+        # Acknowledge, run the chunk transfer inline, then reopen — seamlessly.
+        phone → cam: op=(0x82,0x02)  payload=[0x00]   # ack the close
+        << run IMG_HIST_QUERY / IMG_HIST_POLL / chunk loop / IMG_HIST_END >>
+        sleep(2.0)                                    # camera recovery time
+        phone → cam: op=(0x82,0x00)  payload=[0x00]   # reopen pull session
+        cam → phone: op=(0x82,0x00)  [0x00]           # ACK
+        # reset frame_count → 0 and continue pulling
+
+    if (82,02) received (no frames yet):
+        phone → cam: op=(0x82,0x02)  payload=[0x00]   # close
+        cam → phone: op=(0x82,0x02)  [0x00]           # ACK
+        # exit inner loop, outer loop retries session after 2 s
 ```
 
-> **Spontaneous `(82,02)`:** The camera closes the session unilaterally after ~175 frames
-> (or at any time). It sends `(82,02)` as an unsolicited notification. If it arrives
-> between pulls, it sits in the notify queue and will be dequeued as the *first* item
-> of the next pull's `_recv_frame` call — causing the pull to be misread as a session-close.
-> Fix: after emitting each frame, call `_recv_frame(timeout=0.1)` to drain any pending
-> `(82,02)` before initiating the next pull. If `(82,02)` is found, stop the session
-> immediately. Do **not** auto-reopen — send the close command and exit.
+> **Inline transfer after shutter (confirmed 2026-05-17):** When the camera fires the
+> shutter during live view it sends a spontaneous `(82,02)` close. Instead of exiting
+> the session management loop entirely, the correct approach is to handle the transfer
+> *inside* the inner pull loop: ack the close → run the `(82,10/20/21/22)` transfer
+> → sleep ~2 s for camera recovery → reopen with `(82,00)` → continue pulling frames.
+> The user sees no "session stopped / starting" interruption.
+> A non-blocking drain of the notify queue after each frame is still needed to catch
+> a `(82,02)` that arrived while the previous frame was being emitted.
 
 ### `(82,01)` response layout
 
@@ -816,6 +908,114 @@ if soi >= 0 and eoi > soi:
 **Do not** use a 50 ms time-based drain window — it is unreliable: it may fire before
 all 5 notifications arrive (giving a truncated JPEG) or a spontaneous `(82,02)` may
 arrive after the window closes and corrupt the next pull's `_recv_frame` call.
+
+---
+
+## Post-Photo Auto-Transfer — 0x82 History Protocol (confirmed gen 2, bugreport 0517b)
+
+When the user takes a photo via remote shutter (phone app shutter button during live view), the camera automatically encodes the JPEG and makes it available for transfer via the `(0x82,0x10/0x20/0x21/0x22)` opcode family. This is **distinct from the `(0x88,xx)` share-button pull** — the camera pushes chunks once it signals readiness.
+
+**Three photos** were transferred in bugreport 0517b (Wide Evo FI028, 2026-05-17): flash ON, flash OFF, flash AUTO. Sizes: 216,035 B, 216,968 B, 213,221 B. Each image required ~22–23 chunks at 9,749 B/chunk.
+
+### Transfer sequence
+
+```
+# ── Trigger (immediately after LIVE_VIEW_END) ────────────────────────────
+phone → cam: op=(0x82,0x10)  payload=[0x00]     # IMG_HIST_QUERY
+cam → phone: op=(0x82,0x10)  payload=[0x00]     # ACK
+
+# ── Poll loop (~500 ms interval) ─────────────────────────────────────────
+loop:
+  phone → cam: op=(0x82,0x20)  payload=[]        # IMG_HIST_POLL — is image ready?
+  cam → phone: op=(0x82,0x20)  payload=[0x02]    # not ready — retry
+  ... (camera takes ~4–5 s to encode the JPEG) ...
+  cam → phone: op=(0x82,0x20)  payload=[0x00][0x02][total_size:4B BE][chunk_size:4B BE]
+               # READY — total_size and chunk_size (bytes per chunk excl. header)
+               # Example: 00 02 00034be3 00002615 → total=215011 B, chunk=9749 B
+
+# ── Chunk transfer (REQUEST-RESPONSE — confirmed from btsnoop capture 0517b) ─
+# The phone requests each chunk; the camera responds. The next request is the
+# implicit ACK for the previous chunk. No separate ACK frame is ever sent.
+num_chunks = ceil(total_size / chunk_size)
+for chunk_idx in range(num_chunks):
+  phone → cam: op=(0x82,0x21)  payload=[chunk_idx:4B BE]                    # REQUEST
+  cam → phone: op=(0x82,0x21)  payload=[status:1B][chunk_idx:4B BE][jpeg…]  # RESPONSE
+  # status byte is always 0x00 (OK)
+  # Timing: ~188 ms round-trip per chunk at MTU=247
+
+# ── Close ────────────────────────────────────────────────────────────────
+phone → cam: op=(0x82,0x22)  payload=[]     # IMG_HIST_END
+cam → phone: op=(0x82,0x22)  payload=[0x00] # ACK
+```
+
+> **Same direction as 0x88:** Both protocols use phone-initiated chunk requests, NOT camera push.
+> The earlier analysis that said "camera pushes" was wrong; corrected 2026-05-17 from live capture.
+
+### Timing (from bugreport 0517b)
+
+| Event | Offset |
+|---|---|
+| `LIVE_VIEW_END` (last frame) | T+0 |
+| `IMG_HIST_QUERY` (0x82,0x10) | T+0 ms |
+| First `IMG_HIST_POLL` not-ready | T+80 ms |
+| Last `IMG_HIST_POLL` not-ready | T+4,550 ms |
+| `IMG_HIST_POLL` READY | T+4,600 ms |
+| First chunk pushed | T+4,796 ms |
+| Last chunk pushed / `IMG_HIST_END` | T+9,200 ms |
+
+Total per-image time (encode + transfer): ~9 seconds for a 216 KB JPEG.
+
+### Python receive skeleton
+
+```python
+import struct, math
+
+async def receive_82_transfer(backend):
+    """Receive an auto-transferred image via the 0x82 history protocol."""
+    # 1. Query
+    await backend._write(make_packet(0x82, 0x10, b"\x00"))
+    o1, o2, _ = await backend._recv_frame(timeout=3.0)
+    if not (o1 == 0x82 and o2 == 0x10):
+        return None
+
+    # 2. Poll until ready (max ~30 s)
+    for _ in range(60):
+        await backend._write(make_packet(0x82, 0x20))
+        o1, o2, p = await backend._recv_frame(timeout=2.0)
+        if o1 == 0x82 and o2 == 0x20 and len(p) >= 10:
+            total_size = struct.unpack_from(">I", p, 2)[0]
+            chunk_size = struct.unpack_from(">I", p, 6)[0]
+            break
+        await asyncio.sleep(0.5)   # not ready
+    else:
+        return None  # timed out
+
+    # 3. Request each chunk (phone requests, camera responds)
+    # Response payload: [status:1B][chunk_idx:4B BE][jpeg_data…]
+    jpeg = bytearray()
+    num_chunks = -(-total_size // chunk_size)  # ceiling division
+    for chunk_idx in range(num_chunks):
+        await backend._write(make_packet(0x82, 0x21, struct.pack(">I", chunk_idx)))
+        o1, o2, cp = await backend._recv_frame(timeout=10.0)
+        if not (o1 == 0x82 and o2 == 0x21):
+            break
+        jpeg.extend(cp[5:])  # skip [1B status][4B chunk_idx]
+
+    # 4. Close
+    await backend._write(make_packet(0x82, 0x22))
+    try:
+        await backend._recv_frame(timeout=2.0)
+    except asyncio.TimeoutError:
+        pass
+
+    return bytes(jpeg) if len(jpeg) > 100 else None
+```
+
+### When to trigger
+
+Triggered by a spontaneous `(82,02)` close from the camera during live view (shutter fired). Send `IMG_HIST_QUERY` **immediately after acknowledging the `(82,02)` close** and before reopening the live view session with `(82,00)`. The camera takes ~4–5 s to encode the JPEG after the shutter fires, so poll `(82,20)` at ~500 ms intervals. If the camera has no image ready it keeps returning `[0x02]` — use a timeout (e.g. 30 s / 60 polls) to give up gracefully.
+
+This protocol was only observed after **remote shutter captures** (phone app shutter button during live view). Whether it is triggered by the Share button (like `(0x88,xx)`) is not yet confirmed.
 
 ---
 
