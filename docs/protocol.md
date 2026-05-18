@@ -7,7 +7,7 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 
 ---
 
-## Protocol Coverage Status (as of 2026-05-17)
+## Protocol Coverage Status (as of 2026-05-18)
 
 | Feature | Evo Wide FI028 (Gen 2) | Mini Evo FI019 (Gen 1) | Opcode(s) |
 |---|---|---|---|
@@ -19,10 +19,11 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 | Live view (pull loop) | ✅ | ⚠️ Partial — worked then failed; needs more investigation | `(82,00/01/02)` |
 | Auto-transfer after shutter (inline) | ✅ seamless LV resume | ❓ Unknown — `(82,10/20/21/22)` untested on Gen 1 | `(82,10/20/21/22)` |
 | Share-button image pull | ✅ | ❌ Camera disconnects on `(88,00)` | `(88,00…0b)` |
-| History log / stored image list | ⏳ Not explored | ⏳ Not explored | `(84,xx)` |
+| History log / shot & print counts | ✅ Slot format + record sizes confirmed; HIST payload structure confirmed; per-effect breakdown via real-time tracking | ⏳ Not tested | `(84,xx)` `(00,02)` InfoType 5 |
+| Live shot counter (per-effect tracking) | ✅ `CAMERA_HISTORY_INFO` byte[2] increments per shot; confirmed live 2026-05-18 | ❓ Unknown | `(00,02)` InfoType 5 |
 | `(82,10/20/21/22)` via Share button | ❓ Only seen after shutter | ❓ Unknown | — |
-| Register semantics (0x0C, 0x13–0x1B) | ❓ Unknown | ❓ Unknown | `(80,11)` read |
-| `DEVICE_INFO` strings 0x03/0x04/0x05 | ❓ Unknown | ❓ Unknown | `(00,01)` InfoType 3–5 |
+| Camera settings registers (0x0B–0x1B) | ✅ Values observed; Flash write confirmed; others read-only | ❓ Unknown | `(80,11)` read/write |
+| `DEVICE_INFO` strings 0x03/0x04/0x05 | ✅ Firmware version strings (main / sub / BLE) | ❓ Unknown | `(00,01)` InfoType 3–5 |
 | `CAMERA_FUNCTION_INFO` byte[0]/byte[1] | ❓ Unknown | ❓ Unknown | values differ at rest vs. after print |
 | Secondary GATT service (`0x6387…`) | ❓ Unknown | ❓ Unknown | possibly OTA / config |
 | Gen 3 Cinema (FI0xx) | — | — | Not in possession; assumed same Link protocol |
@@ -240,14 +241,16 @@ cross-referenced with the gen 2 Evo Wide HCI capture:
 | 0x84 | 0x02 | `CAMERA_LOG_SUBTOTAL_CLEAR` | |
 | 0x84 | 0x03 | `CAMERA_LOG_DATE_START` | |
 | 0x84 | 0x06 | `CAMERA_LOG_FILTER_START` | |
-| 0x88 | 0x00 | `IMAGE_TRANSFER_START` | **Phone→cam** (empty payload) — initiates the pull. Sent when `CAMERA_FUNCTION_INFO` transfer-ready flag (payload[4]) becomes `0x01`. **Cam→phone** ack: 5B `[00 00 00 00 00]` — camera is ready. |
+| 0x88 | 0x00 | `IMAGE_TRANSFER_START` | **Phone→cam** (empty payload) — initiates the pull. Sent when `CAMERA_FUNCTION_INFO` transfer-ready flag (payload[4]) becomes non-zero (raised by camera ~700 ms after `(0x85,0x01)` DOWNLOAD_INITIATE). **Cam→phone** ack: 5B `[00 00 00 00 00]` — camera is ready; `[0x81]` = NACK (not in transfer mode — never proceed to `(88,01)` on NACK). |
 | 0x88 | 0x01 | `IMAGE_TRANSFER_INFO` | **Phone→cam**: `[0x00 0x00 0x00 0x00]` (image index 0) — requests metadata. **Cam→phone**: 34B — total_size, chunk_data_sz, timestamp, img_count. See [Image Transfer section](#phone-initiated-image-transfer--088-pull-protocol-confirmed-gen-2). |
 | 0x88 | 0x02 | `IMAGE_TRANSFER_DATA` | **Phone→cam**: `[chunk_idx: uint32 BE]` — requests chunk N. **Cam→phone**: single frame — `[img_idx:4][chunk_seq:1][jpeg_data…]`. No separate ack frame; the data frame IS the ack. |
 | 0x88 | 0x03 | `IMAGE_TRANSFER_END` | **Phone→cam** (empty) — all chunks received. **Cam→phone**: 1B `[0x00]` (status OK). |
 | 0x88 | 0x05 | `IMAGE_TRANSFER_RESULT` | **Phone→cam**: `[0x00 0x00 0x00 0x00]` — transfer complete. **Cam→phone**: 1B `[0x00]` (success). |
-| 0x84 | 0x09 | `CAMERA_LOG_SLOT_QUERY` | Payload = `[1B slot_id]`. Response = `[2B slot_id_echo][4B data_size][4B data_size][4B record_count]` — e.g. slot=0 → 3 records, 4908B. Returns all-zeros if log is empty (Wide Evo with no prints) or after `CLEAR`. **Confirmed 2026-05-17.** |
-| 0x84 | 0x0a | `CAMERA_LOG_SLOT_DATA` | Payload = `[1B slot_id][4×0x00]`. Camera immediately pushes back `[data_size]` bytes as a fragmented IOS Link packet. Format: `[6B header][N×RECORD]`. Slot 0: record_size=1636B, print_count at after_date[1] and [5]. Slot 2: record_size=1646B, filter counts at after_date[3,7,9,11,13,15]. **Confirmed 2026-05-17 + live 2026-06-17.** |
+| 0x84 | 0x09 | `CAMERA_LOG_SLOT_QUERY` | Payload = `[1B slot_id]`. Response = `[2B slot_id_echo][4B data_size][4B data_size][4B record_count]` — e.g. slot=0 → 1 record, 1636B. Returns all-zeros if log is empty. **count=1 after each new shot (camera writes HIST in real-time even while connected).** Confirmed 2026-05-17/18. |
+| 0x84 | 0x0a | `CAMERA_LOG_SLOT_DATA` | Payload = `[slot:2B LE][0x00×3]`. Camera immediately pushes back `(6 + data_size)` bytes as a fragmented IOS Link packet. Format: `[6B zeros][8B ASCII date "YYYYMMDD"][N × record_bytes]`. Slot 0: record_size=1636B = 8B date + 37×44B shot records. Slot 2: record_size=1646B = 8B date + 7×234B print records. **Only sent at session start; phone uses real-time tracking (CAMERA_HISTORY_INFO + regs 0x17/0x1b) for live shots. Confirmed 2026-05-18.** |
 | 0x84 | 0x0b | `CAMERA_LOG_SLOT_ACK` | Payload = `[1B slot_id]`. Wide Evo replies `[0x00][slot_id]`. Acknowledges receipt of slot data. |
+| 0x85 | 0x00 | `DOWNLOAD_STATE_QUERY` | **Phone→cam**: empty. **Cam→phone**: 5B state, e.g. `[00 00 ff 00 00]`. See [DOWNLOAD_PREPARE Protocol](#download_prepare-protocol--0x85-confirmed-gen-2). |
+| 0x85 | 0x01 | `DOWNLOAD_INITIATE` | **Phone→cam**: 9B `[05 00 00 00 00 00 00 00 00]` — triggers camera into transfer mode. **Cam→phone**: `[00]` ACK. Camera raises CAMERA_FUNCTION_INFO flag ~700 ms later. |
 
 ### InfoType payload values
 
@@ -262,9 +265,9 @@ Response payload format: `[0x00][InfoType_echo][str_len][str_bytes…]`
 | 0x00 | `MANUFACTURER` | `"FUJIFILM"` (8 chars) |
 | 0x01 | `MODEL_ID` | `"FI028"` (5 chars) |
 | 0x02 | `SERIAL` | `"92007814"` (8 chars — matches BLE name suffix) |
-| 0x03 | *(unknown string)* | `"0000"` |
-| 0x04 | *(unknown string)* | `"0100"` |
-| 0x05 | *(unknown string)* | `"0000"` |
+| 0x03 | `FW_MAIN` — firmware main version | `"0000"` |
+| 0x04 | `FW_SUB` — firmware sub-version | `"0102"` |
+| 0x05 | `FW_BLE` — BLE firmware version | `"0005"` |
 | 0x09 | *(empty)* | `` |
 | 0x0A | *(empty)* | `` |
 
@@ -277,9 +280,9 @@ Response payload format: `[0x00][InfoType_echo][data…]`
 | 0x00 | `IMAGE_SUPPORT_INFO` | **`[width: 2B BE][height: 2B BE][…]`** — always query this first; use the camera-reported size for all image prep. See [film dimensions table](#film-dimensions-by-model--print-mode). |
 | 0x01 | `BATTERY_INFO` | `[battery_state][battery_pct]`. State: 0=critical, 1=low, 2=medium, 3=high, 4=full. |
 | 0x02 | `PRINTER_FUNCTION_INFO` | `[status_byte][0x00][shots_in_pack: 2B]…`. `photos_left = status_byte & 0x0F`, `charging = bool(status_byte & 0x80)`. Wide Evo: status=0x26 → 6 remaining, shots_in_pack=0x000C=12. |
-| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: transfers][uint32 BE: prints_made]`. Wide Evo: `00000004 00000005` → transfers=4 (digital photo-to-phone), prints_made=5 (physical film ejections). |
-| 0x04 | `CAMERA_FUNCTION_INFO` | 16B data. **`data[2]` (= full payload[4]) = `0x01` when camera is in transfer-ready state** (user pressed Share); `0x00` at rest. This is the flag the app polls to know when to fire `(88,00)`. Confirmed from btsnoop: flag appeared 0.6 s before app sent `(88,00)`. Normal response (Wide Evo, new_capture): `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`; `data[0]`=0x03, `data[1]`=0x50. Semantics of other bytes TBD. |
-| 0x05 | `CAMERA_HISTORY_INFO` | `[0x00][0x00][0x17]` (Wide Evo). `0x17`=23 — possibly lifetime print counter. |
+| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: field_a][uint32 BE: field_b]`. Semantics TBD — does **not** directly report total shots or prints. Bugreport 0518 example: `00000009 00000005` (field_a=9, field_b=5). See HIST `(84,xx)` for the shot/print counts shown in the app's Usage History screen. |
+| 0x04 | `CAMERA_FUNCTION_INFO` | 16B data. **`data[2]` (= full payload[4]) = `0x01` when camera is in transfer-ready state**; `0x00` at rest. The flag is raised by the camera ~700 ms after the phone sends `(0x85,0x01)` DOWNLOAD_INITIATE — it does **not** rise on its own. Confirmed from btsnoop 2026-05-18. Normal response (Wide Evo): `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`; `data[0]`=0x03, `data[1]`=0x50. Semantics of other bytes TBD. |
+| 0x05 | `CAMERA_HISTORY_INFO` | `[0x00][0x00][counter: 1B]` (Wide Evo). **Confirmed: live shot counter.** Increments by 1 with each photo taken. Bugreport 0518 (session 1): counter=`0x26`=38; session 2 (two photos taken between sessions): counter=`0x28`=40; observed incrementing `0x28`→`0x29`→`0x2a`→`0x2b` (3 shots) in real-time in the live btsnoop. |
 
 ### Film dimensions by model / print mode
 
@@ -457,36 +460,177 @@ op=(0x00,0x01)  [0x0A]                → (empty)
 op=(0x00,0x02)  [0x00]                IMAGE_SUPPORT_INFO → 1260×840 (Wide confirmed) ✓
 op=(0x20,0x10)  []                    FW_PROGRAM_INFO → firmware version bytes
 op=(0x80,0x10)  []                    [Evo] config register bank → 0x00020003
-op=(0x80,0x11)  [0x0B, 0,0,0,0]      [Evo] read reg 0x0B → 2
-op=(0x80,0x11)  [0x0C, 0,0,0,0]      → 0
-op=(0x80,0x11)  [0x13, 0,0,0,0]      → 0
-op=(0x80,0x11)  [0x14, 0,0,0,0]      → 0
-op=(0x80,0x11)  [0x15, 0,0,0,0]      → 0
-op=(0x80,0x11)  [0x16, 0,0,0,0]      → 0x32 = 50  (possibly total prints taken)
-op=(0x80,0x11)  [0x17, 0,0,0,0]      → 0x01 = 1
-op=(0x80,0x11)  [0x18..0x1A, ...]    → 0
-op=(0x80,0x11)  [0x1B, 0,0,0,0]      → 1
-op=(0x84,0x00)  []                    CAMERA_LOG_SUBTOTAL_START → digital transfers to phone = 4
-op=(0x84,0x01)  [00 00 00 00]         CAMERA_LOG_SUBTOTAL_DATA (no response observed)
-op=(0x84,0x02)  []                    CAMERA_LOG_SUBTOTAL_CLEAR → ACK 0x00
-op=(0x84,0x09)  [0x00]               HISTORY_ENTRY_QUERY index=0 → 14 bytes (all zeros)
-op=(0x84,0x0b)  [0x00]               HISTORY_ENTRY_ACK   index=0 → [0x00][0x00]
-op=(0x84,0x09)  [0x02]               HISTORY_ENTRY_QUERY index=2 → [0x00,0x02, 12×0x00]
-op=(0x84,0x0b)  [0x02]               HISTORY_ENTRY_ACK   index=2 → [0x00][0x02]
+op=(0x80,0x11)  [0x0B, 0,0,0,0]      [Evo] read reg 0x0B → 2   (Flash/WB: write confirmed as flash; read=2 suspected WB=AUTO)
+op=(0x80,0x11)  [0x0C, 0,0,0,0]      → 0   (suspected Film Style: 0=OFF)
+op=(0x80,0x11)  [0x13, 0,0,0,0]      → 0   (unknown)
+op=(0x80,0x11)  [0x14, 0,0,0,0]      → 0   (unknown)
+op=(0x80,0x11)  [0x15, 0,0,0,0]      → 0   (unknown)
+op=(0x80,0x11)  [0x16, 0,0,0,0]      → value_byte=0, param_byte=0x32=50  (suspected Exposure comp: 0=center, range=±50)
+op=(0x80,0x11)  [0x17, 0,0,0,0]      → 1   (suspected Film Effect: 1=Normal #01)
+op=(0x80,0x11)  [0x18..0x1A, ...]    → 0   (unknown)
+op=(0x80,0x11)  [0x1B, 0,0,0,0]      → 1   (suspected Lens Effect: 1=Normal #01)
+op=(0x84,0x00)  []                    HIST_INIT — cam→phone: 13B `[00000000 04000000 04000000 00]`
+op=(0x84,0x01)  [00 00 00 00]         HIST_SCHED — cam→phone: 9B (all zeros)
+op=(0x84,0x02)  []                    HIST_COMMIT — cam→phone: `[00]`
+op=(0x84,0x09)  [0x00]               HIST_LIST_REQ slot=00 (all prints) → 14B: `[slot:2B][id:4B][id:4B][count:4B BE]`
+op=(0x84,0x09)  [0x02]               HIST_LIST_REQ slot=02 (pending downloads) → 14B: same format; count=pending images
+op=(0x84,0x0b)  [0x00]               HIST_SLOT slot=0 → [0x00][0x00]
+op=(0x84,0x0b)  [0x02]               HIST_SLOT slot=2 → [0x00][0x02]
 # [history download: 0x80,0x15 + 0x82,0x00 + 176× 0x82,0x01 + 0x82,0x02]
 [app polls SUPPORT_FUNCTION_INFO InfoTypes 04,05,02,03,01 in rotation every ~0.5s]
 ```
 
-### Digital photo transfers — Evo Wide
+### HIST protocol (84,xx) — shot/print event log
 
-`CAMERA_LOG_SUBTOTAL_START` (op=0x84,0x00) response payload (bytes 6–17):
+The `(84,xx)` HIST sequence is sent by the app on **every BLE connect**. It serves two purposes:
+
+1. **Detect pending downloads** — slot 02 count > 0 → prompt user to pull images
+2. **Retrieve usage history** — slot 00 and slot 02 contain per-shot and per-print event records
+   that the app counts to populate the "Usage History" screen (Shots, Prints, Film Effect tallies)
+
+Confirmed from btsnoop 2026-05-18 (Wide Evo, official Instax app).
+
+#### Full HIST opcode table
+
+| op1 | op2 | Name | Direction | Notes |
+|-----|-----|------|-----------|-------|
+| 0x84 | 0x00 | `HIST_INFO` | P→C empty; C→P 13B | Session info — see below |
+| 0x84 | 0x01 | `HIST_INIT` | P→C 4B `[00×4]`; C→P 9B `[00×9]` | Initialise session |
+| 0x84 | 0x02 | `HIST_START` | P→C empty; C→P 1B `[00]` | Commit/start |
+| 0x84 | 0x09 | `HIST_LIST_REQ` | P→C 1B `[slot]`; C→P 14B | Query slot metadata |
+| 0x84 | 0x0a | `HIST_GET_DATA` | P→C 5B `[slot:2B][00×3]`; C→P variable | Retrieve slot record data |
+| 0x84 | 0x0b | `HIST_DONE` | P→C 1B `[slot]`; C→P 2B `[slot:2B]` | Finalise slot read |
+
+#### Wire sequence
+
 ```
-00 00 00 00  04 00 00 00  04 00 00 00  00
+phone → cam: op=(0x84,0x00)  payload=[]
+cam → phone: op=(0x84,0x00)  13B  [00000000 04000000 04000000 00]   # HIST_INFO
+
+phone → cam: op=(0x84,0x01)  payload=[0x00 0x00 0x00 0x00]
+cam → phone: op=(0x84,0x01)  9B   [0x00 × 9]                       # HIST_INIT
+
+phone → cam: op=(0x84,0x02)  payload=[]
+cam → phone: op=(0x84,0x02)  1B   [0x00]                           # HIST_START
+
+# ── for each slot to read (app reads slot 0x00 then slot 0x02) ──────────────
+phone → cam: op=(0x84,0x09)  payload=[slot]
+cam → phone: op=(0x84,0x09)  14B  [slot:2B][record_size:4B BE][record_size:4B BE][count:4B BE]
+
+  # if count == 0: skip to HIST_DONE
+  # if count > 0:
+phone → cam: op=(0x84,0x0a)  payload=[slot:2B][0x00×3]
+cam → phone: op=(0x84,0x0a)  (6 + record_size) bytes               # HIST_GET_DATA
+
+phone → cam: op=(0x84,0x0b)  payload=[slot]
+cam → phone: op=(0x84,0x0b)  2B   [slot:2B]                        # HIST_DONE
+# ─────────────────────────────────────────────────────────────────────────────
+```
+
+> **HIST slot read-and-acknowledge behavior (confirmed, bugreport 2026-05-18):**
+>
+> - The camera **writes new shot records in real-time** even while BLE is connected.
+>   After each shot, `HIST_LIST_REQ (84,09)` for slot 0 returns `count=1` (data ready).
+> - During a live session the iOS app issues `HIST_DONE (84,0b)` to acknowledge the new record
+>   **without** reading it via `HIST_GET_DATA (84,0a)`. Per-effect counting is done in real-time
+>   by tracking `CAMERA_HISTORY_INFO` byte[2] (shot counter) + reg `0x17`/`0x1b` at each increment.
+> - `HIST_GET_DATA (84,0a)` is only sent at session start (once per slot). Both reads return the
+>   **cumulative historical** record set (shots/prints accumulated before this BLE connection).
+> - Shots taken while BLE is connected are written to the cumulative HIST after the session ends
+>   (pending confirmation — requires disconnect + reconnect capture with non-Normal effects).
+
+#### HIST_LIST_REQ (84,09) — slot metadata
+
+14-byte response: `[slot:2B][record_size:4B BE][record_size:4B BE][count:4B BE]`
+
+| Slot | Content | Bugreport 0518 example (count > 0) |
+|------|---------|-------------------------------------|
+| `0x00` | **Shot event log** | `0000 00000664 00000664 00000001` → record_size=1636, count=1 |
+| `0x02` | **Print event log** | `0002 0000066e 0000066e 00000001` → record_size=1646, count=1 |
+
+- `count=0`: slot is empty (no new events since last read)
+- `count=1`: one composite record is ready (contains all events since last sync)
+- The `record_size` field appears twice (both copies identical in all observed captures)
+
+#### HIST_GET_DATA (84,0a) — slot record payload format
+
+The camera returns `6 + record_size` bytes:
+
+```
+[6B zeros (header/status)][record_data: record_size bytes]
+```
+
+> Note: the 6-byte prefix is all zeros in all observed responses — it is NOT a slot_id field.
+> Slot identity is inferred from the preceding `HIST_GET_DATA` request and the payload size.
+
+`record_data` layout (confirmed, bugreport 0518):
+
+```
+[date_str: 8B ASCII "YYYYMMDD"][event_records: N × record_size_each bytes]
+```
+
+| Slot | Record data size | Event record size | Event count | Derived app display |
+|------|-----------------|-------------------|-------------|---------------------|
+| `0x00` | 1636 B | **44 bytes** each | (1636−8)/44 = **37** | **"37 Shots"** |
+| `0x02` | 1646 B | **234 bytes** each | (1646−8)/234 = **7** | **"7 Prints"** |
+
+The app **counts the number of event records** in each slot to produce the shot and print totals
+shown in the Usage History screen. The date string in the record header is the camera's RTC date
+(`"20260618"` = 2026-06-18 in the bugreport 0518 session).
+
+#### Shot record (44 bytes) — field layout
+
+Two captures compared (all-Normal baseline vs. session after 2 non-Normal shots):
+
+**Bugreport 0518, session 1** (all 37 shots Normal film + Normal lens):
+```
+rec[ 0]: 00 01 00 00 00 01 00 00 [00 × 36]
+rec[ 1]…rec[35]: [00 × 44]   (all zeros)
+rec[36]: [00 × 21] 01 [00 × 22]
+```
+
+**Session 2** (after 2 shots with non-Normal effects — Film #2 Vivid and Lens #10 Beam Flare — taken before this BLE connection):
+```
+rec[ 0]: 00 01 00 00 00 00 00 00 [00 × 36]   ← byte 5 cleared
+rec[ 1]: 00 00 … 00 01 00 … 00              ← byte 19 = 0x01 (new)
+rec[ 2]…rec[35]: [00 × 44]   (all zeros)
+rec[36]: [00 × 21] 01 [00 × 22]             ← unchanged
+```
+
+Observations from comparing the two sessions:
+- `rec[0]` byte 1 = `0x01` — present in both; semantics TBD
+- `rec[0]` byte 5 = `0x01` in session 1 → `0x00` in session 2 (cleared after 2 non-Normal shots)
+- `rec[1]` byte 19 = `0x01` — appeared after the user's Vivid+Beam Flare shots; candidate for **Film Effect #2 (Vivid)** or **Lens Effect #10 (Beam Flare)** field
+- `rec[36]` byte 21 = `0x01` — unchanged across both sessions; semantics TBD
+
+> **Film/Lens effect byte positions are NOT yet decoded.** The per-effect breakdown shown in the
+> app (Normal=37, Vivid=2, Beam Flare=2) comes from the app's **real-time tracking** of
+> `reg 0x17` / `reg 0x1b` at each shot, not from reading these bytes. The 44-byte HIST record
+> likely stores per-category tallies or flags, but the exact encoding requires controlled captures
+> with known non-Normal effects taken **while BLE-disconnected** (so they appear in HIST slot reads).
+
+#### Print record (234 bytes) — partial field layout
+
+From bugreport 0518 (7 prints, all with Normal settings):
+
+```
+rec[0]: 00 00 00 01 00 00 00 01 00 01 00 01 00 01 00 01 00 00…
+rec[1]…rec[6]: [00 × 234]   (all zeros)
+```
+
+Non-zero bytes in `rec[0]` (first print of this sync period): byte 3, 7, 9, 11, 13, 15 = `0x01`.
+These six fields likely represent per-print setting counts or indices (film effect, lens effect,
+exposure, WB, film style, etc.) — exact mapping TBD. All remaining print records are all-zeros,
+consistent with default/Normal settings for those prints.
+
+#### HIST_INFO (84,00) response — session-level counters
+
+```
+00 00 00 00  04 00 00 00  04 00 00 00  00   (13 bytes, bugreport 0518)
              ^^^^^^^^^^^  ^^^^^^^^^^^
-             uint32 LE=4  uint32 LE=4  ← both fields = digital photo transfers to phone (NOT physical prints!)
+             uint32 LE=4  uint32 LE=4   ← semantics TBD; NOT the queue depth
 ```
-In the 19-51-52 capture: 4 total transfers (3 phone-initiated, 1 camera-initiated), 0 physical prints made.
-Use `SUPPORT_FUNCTION_INFO InfoType=0x02` (`PRINTER_FUNCTION_INFO`) for shots remaining.
+These fields are NOT the shot/print counts — use HIST_LIST_REQ slot counts for that.
 
 ### Image size — Evo Wide
 
@@ -514,8 +658,10 @@ Decoded keepalive values from 19-51-52 capture:
 - Battery: state=2 (medium), pct=50%
 - Shots remaining: `0x26 & 0x0F` = 6; shots_in_pack=12 (Wide Evo)
 - Digital photo transfers to phone: 4 (PRINT_HISTORY_INFO field 1 = 4); physical film ejections: 5 (field 2 = 5, `prints_made`)
+
+> **CAMERA_HISTORY_INFO byte[2] = live shot counter.** This byte increments by 1 each time a photo is taken, whether the camera is BLE-connected or not. The app detects each new shot by polling this value (758 polls observed in one 133-second session). **This is how the app tracks per-effect shot counts in real time:** when the counter increments, the app reads the current film effect (`reg 0x17`) and lens effect (`reg 0x1b`) to attribute the shot to the correct category. The cumulative per-effect breakdown shown in the Usage History screen (Normal=37, Vivid=2, etc.) is **maintained locally by the app** — NOT stored as fields directly readable from the camera.
 - CAMERA_FUNCTION_INFO byte[0]=0x02, byte[1]=0x32=50 (semantics TBD)
-- CAMERA_HISTORY_INFO byte[2]=0x17=23 (possibly lifetime print counter)
+- CAMERA_HISTORY_INFO byte[2]=0x17=23 (**live shot counter** — 23 shots taken at the time of this 19-51-52 capture)
 
 ---
 
@@ -552,87 +698,180 @@ Flash AUTO: phone→cam (0x80,0x11) payload=0b 02 00 00 00 00
 
 All three flash changes happened during an ongoing live view session — the BLE connection stays up and the live view session does not need to be interrupted to change flash.
 
-### Other known registers (startup read-only, semantics TBD)
+### Register table — (0x80,0x11) READ response format
 
-| reg_id | startup value (Wide Evo) | Notes |
-|---|---|---|
-| 0x0B | 0x00 | Flash mode (AUTO default) — **confirmed** |
-| 0x0C | 0x00 | Unknown |
-| 0x13 | 0x00 | Unknown |
-| 0x14 | 0x00 | Unknown |
-| 0x15 | 0x00 | Unknown |
-| 0x16 | 0x32 = 50 | Possibly total prints (matches `CAMERA_FUNCTION_INFO` byte[1]) |
-| 0x17 | 0x01 | Unknown |
-| 0x18–0x1A | 0x00 | Unknown |
-| 0x1B | 0x01 | Unknown |
+Response payload: `[reg_id: 2B BE][value: 1B][param: 1B][00 00]`
+
+```
+READ  phone→cam: (0x80,0x11)  payload=[reg_id][0x00×5]   (6 bytes)
+      cam→phone: (0x80,0x11)  payload=[0x00][reg_id][value][param][0x00][0x00]   (6 bytes)
+                                                      ^^^^^  ^^^^^
+                                                      byte2  byte3
+```
+
+| reg_id | name (suspected) | value byte (byte[2]) | param byte (byte[3]) | Bugreport 0518 | Confidence |
+|--------|-----------------|----------------------|----------------------|----------------|-----------|
+| 0x0B | Flash / WB | 0x02 | 0x00 | `000b 02 00 0000` | **Flash write confirmed** (0=AUTO, 1=ON, 2=OFF); read value=2 suspected WB |
+| 0x0C | Film Style | 0x00 | 0x00 | `000c 00 00 0000` | Suspected (0=OFF) |
+| 0x13 | unknown | 0x00 | 0x00 | `0013 00 00 0000` | — |
+| 0x14 | unknown | 0x00 | 0x00 | `0014 00 00 0000` | — |
+| 0x15 | unknown | 0x00 | 0x00 | `0015 00 00 0000` | — |
+| 0x16 | Exposure comp | 0x00 | 0x32=50 | `0016 00 32 0000` | Suspected: value=0=center; param=50=±range |
+| 0x17 | Film Effect | 0x01 | 0x00 | `0017 01 00 0000` | Suspected (1=Normal #01) |
+| 0x18 | unknown | 0x00 | 0x00 | `0018 00 00 0000` | — |
+| 0x19 | unknown | 0x00 | 0x00 | `0019 00 00 0000` | — |
+| 0x1A | unknown | 0x00 | 0x00 | `001a 00 00 0000` | — |
+| 0x1B | Lens Effect | 0x01 | 0x00 | `001b 01 00 0000` | Suspected (1=Normal #01) |
+
+> **Note:** These registers reflect the camera's **current settings** at connect time — they are
+> NOT the source of the per-image detail screen in the app. The image detail screen (Film, Lens,
+> Exposure, WB, Film Style) is populated from **locally saved metadata** stored by the app when
+> each image was pulled via `(88,01)` IMAGE_TRANSFER_INFO; no live BLE message is sent when
+> viewing image detail. More captures with varied settings are needed to confirm the exact
+> semantic mapping of each register index to its setting name.
+
+---
+
+## DOWNLOAD_PREPARE Protocol — 0x85 (confirmed gen 2)
+
+Before the camera will enter transfer mode, the phone sends a **download prepare** sequence
+using opcode `0x85`. This causes the camera to raise its `CAMERA_FUNCTION_INFO` transfer-ready
+flag ~700 ms later, at which point the poll loop fires `(0x88,0x00)` to begin the pull.
+
+Confirmed from btsnoop 2026-05-18 (`new_capture_0518`): the official app **always** sends this
+sequence — the camera does NOT raise the flag on its own without it.
+
+| op1 | op2 | Name | Direction | Payload |
+|-----|-----|------|-----------|---------|
+| 0x85 | 0x00 | `DOWNLOAD_STATE_QUERY` | P→C (empty); C→P 5B | `[00 00 ff 00 00]` when images are queued; meaning of individual bytes TBD |
+| 0x85 | 0x01 | `DOWNLOAD_INITIATE` | P→C 9B; C→P 1B `[00]` | P→C payload: `05 00 00 00 00 00 00 00 00` — first byte `0x05` semantics TBD |
+
+### (85,xx) sequence
+
+```
+phone → cam: op=(0x85,0x00)  payload=[]                      # query download state
+cam → phone: op=(0x85,0x00)  5B  [00 00 ff 00 00]            # state (ff = images pending?)
+
+phone → cam: op=(0x85,0x01)  payload=[05 00 00 00 00 00 00 00 00]  # initiate download
+cam → phone: op=(0x85,0x01)  1B  [00]                        # ACK
+
+phone → cam: op=(0x85,0x00)  payload=[]                      # re-query to confirm
+cam → phone: op=(0x85,0x00)  5B  [00 00 ff 00 00]            # state unchanged
+
+# ~700 ms later — no further commands sent:
+CAMERA_FUNCTION_INFO payload[4] flips 0x00 → 0x01            # camera is now ready
+# poll loop detects non-zero flag → sends (88,00) → full pull
+```
+
+> **Open question:** The `0x05` in `(0x85,0x01)` payload may be a fixed constant, the
+> queue count, or a download-mode selector. Only one capture is confirmed. The
+> `[00 00 ff 00 00]` response byte `0xff` likely indicates "images pending" but exact
+> semantics are unknown.
 
 ---
 
 ## Phone-Initiated Image Transfer — 0x88 Pull Protocol (confirmed gen 2)
 
-When the user presses the **share button** on the camera, a flag in the
-`CAMERA_FUNCTION_INFO` keepalive poll response changes (see below). The **phone detects
-this flag and initiates every step of the transfer** — the camera never pushes
-unsolicited image data. The phone pulls the image chunk by chunk.
+Every photo printed by the camera is automatically queued for transfer to the phone.
+The **phone initiates every step** — it sends `(88,00)` after the camera enters transfer
+mode. The camera never pushes unsolicited image data.
 
-> **Correction from earlier notes:** This was initially described as camera-initiated push.
-> Analysis of the btsnoop (`_diff_status_before_88.py`, 2026-05-17) confirmed it is
-> phone-initiated pull: the phone sends `(88,00)` first, 0.6 s after the flag appears.
+There are two trigger paths:
 
-### Transfer-ready detection
+| Path | Trigger | Mechanism |
+|------|---------|-----------|
+| **A — while connected** | Camera prints a photo while phone is connected | Poll loop detects CAMERA_FUNCTION_INFO flag ≠ 0 — but **the phone must first send `(0x85,0x01)` to cause the flag to rise** |
+| **B — on-connect** | HIST_LIST_REQ slot 02 count > 0 at connection time | Phone sends `(0x85,0x01)` → waits for CAMERA_FUNCTION_INFO flag → sends `(88,00)` |
+
+In both cases the sequence is: **`(85,xx)` prepare → CAMERA_FUNCTION_INFO flag rises → `(88,00)` pull.**
+Sending `(88,00)` before the flag is set returns `[0x81]` NACK.
+
+> **Correction from earlier notes:** This was initially described as camera-initiated push,
+> then incorrectly documented as requiring a Share button press. Full btsnoop analysis
+> (2026-05-18) revealed the `(0x85,0x01)` step that causes the camera to enter transfer
+> mode — the phone actively triggers every transfer.
+
+### Transfer-ready flag (CAMERA_FUNCTION_INFO)
 
 The app continuously polls `CAMERA_FUNCTION_INFO` (op=`0x00,0x02` InfoType=`0x04`) as
-part of its idle keepalive loop. When the user presses Share on the camera:
+part of its idle keepalive loop. **The flag does not rise on its own** — the phone must
+first send `(0x85,0x01)` DOWNLOAD_INITIATE, after which the camera raises the flag ~700 ms later.
 
 ```
 Normal response payload[4] = 0x00:
   00 04 03 50 [00] 00 00 00 00 00 00 05 04 01 00 00 00 00
 
 Transfer-ready response payload[4] = 0x01 or 0x02:
-  00 04 03 50 [01] 00 00 00 00 00 05 05 00 00 00 00 00 00  ← ready / standby
-  00 04 03 50 [02] 00 00 00 00 00 05 05 00 00 00 00 00 00  ← actively transferring
+  00 04 03 50 [01] 00 00 00 00 00 05 05 00 00 00 00 00 00  ← ready
+  00 04 03 50 [02] 00 00 00 00 00 05 05 00 00 00 00 00 00  ← also ready (multiple pending)
                 ^^
-  data[2] / payload[4] flips 0x00 → 0x01 when camera enters transfer mode.
-  Value 0x02 also occurs (persists after an initial 0x01 state or on fresh press).
   Fire (88,00) on ANY non-zero value.
 ```
 
-Live observation (Wide Evo, 2026-05-17):
-- Flag starts at `0x01` (persists between BLE sessions until camera is power-cycled)
-- Transitions to `0x02` when user presses Transfer on a camera that was already at `0x01`
-- Both values accepted: send `(88,00)` on `payload[4] != 0x00`
+Live observation (Wide Evo, 2026-05-18):
+- Flag `0x01` = camera ready, one image pending; `0x02` = multiple images or already mid-drain
+- Flag stays non-zero as long as images remain in the queue; drops to `0x00` when empty
+- Both values accepted: fire `(88,00)` on `payload[4] != 0x00`
 
 ### Queue behaviour (confirmed 2026-05-17)
 
-The camera maintains an internal queue of images shared by the user. Each successful
+The camera maintains an internal queue of **every printed photo** pending transfer. Each successful
 `(88,05)` dequeues one image. The flag **stays non-zero as long as images remain in
 the queue** and drops to `0x00` only when the queue is empty. There is **no queue
-depth field** exposed in the protocol:
+depth field** exposed in the CAMERA_FUNCTION_INFO poll:
 
 - `img_count` in `(88,01)` metadata — always `1` regardless of queue depth
-- `(88,00)` ack `[00 00 00 00 00]` — always all-zero
+- `(88,00)` ack `[00 00 00 00 00]` — all-zero when ready; **`[0x81]` (1 byte) = NACK / camera not in transfer mode** (confirmed 2026-05-18: sending `(88,01)` after a `0x81` ack crashes the camera BLE stack — abort on any non-`[00×5]` ack)
 - `CAMERA_FUNCTION_INFO` payload bytes `[9:11]` — always `0x00 0x00` while images are queued
 - `CAMERA_FUNCTION_INFO` payload bytes `[11:12]` — always `0x05 0x05` (constant, unrelated)
 
 **Drain algorithm:** loop back to polling after each successful pull; exit when `flag == 0x00`.
 
-Duplicate shares: if the user presses Share on the same photo twice, it enters the
-queue twice and is transferred twice as separate entries.
+> **Note on `0x81` NACK from `(88,00)`:** Should not occur when using the `(0x85,0x01)` →
+> flag-wait → `(88,00)` flow. If seen, the camera is not yet in transfer mode — abort the
+> attempt and let the poll loop retry naturally. **Never proceed to `(88,01)` after a `0x81`
+> ack** — confirmed 2026-05-18 this crashes the camera BLE stack.
+>
+> **Note on short response from `(88,01)`:** Occasionally the camera responds with a 1B
+> status (`0x02`) instead of 34B metadata immediately after `(88,00)` — it is still
+> preparing. Implementation: retry `(88,01)` once after 1 s. Confirmed 2026-05-18.
 
-Confirmed from btsnoop (new_capture, Wide Evo, 2026-05-17):
-flag appeared at T+2616.183s, `(88,00)` sent at T+2616.769s — 0.6 s later.
+**Alternative queue depth check (HIST_LIST_REQ):** Use the `(84,xx)` HIST sequence on connect
+to get the exact pending count before any CAMERA_FUNCTION_INFO flag appears. See
+[HIST protocol (84,xx)](#hist-protocol-84xx--download-queue-depth-check).
+Confirmed from btsnoop 2026-05-18: the official app does HIST_INIT + HIST_LIST_REQ slot 02 on
+every connect and uses the count to decide whether to show a download prompt.
 
-Confirmed end-to-end in live Python/bleak run (Wide Evo, 2026-05-17):
-4 images drained automatically in one BLE session (221,773 B / 235,414 B / 235,414 B / 210,761 B).
+Duplicate queue entries: if the same photo is queued for transfer more than once
+(e.g. from a prior partial session), it appears multiple times and is transferred
+as separate entries.
+
+Confirmed from btsnoop (new_capture_0518, Wide Evo, 2026-05-18):
+`(0x85,0x01)` sent at T+154.580s → flag appeared at T+155.283s (~700 ms later) → `(88,00)` sent at T+155.855s.
+
+Confirmed end-to-end in live Python/bleak runs (Wide Evo):
+- 2026-05-17: 4 images drained automatically (221,773 B / 235,414 B / 235,414 B / 210,761 B)
+- 2026-05-18: 2 images pulled via manual "Pull Photo" button using `(0x85,0x01)` trigger (218,123 B / 214,640 B)
+
 Per-image BLE time: ~12–19 s. Camera SD read is the bottleneck (~0.7 s/chunk).
 
 ### Transfer sequence (phone-initiated pull)
 
 ```
-# ── Trigger detection ───────────────────────────────────────────────────────
+# ── Prepare: put camera into transfer mode ──────────────────────────────────
+phone → cam: op=(0x85,0x00)  payload=[]                      # query download state
+cam → phone: op=(0x85,0x00)  5B  [00 00 ff 00 00]            # state (images queued)
+
+phone → cam: op=(0x85,0x01)  payload=[05 00 00 00 00 00 00 00 00]  # initiate download
+cam → phone: op=(0x85,0x01)  1B  [00]                        # ACK
+
+phone → cam: op=(0x85,0x00)  payload=[]                      # re-query to confirm
+cam → phone: op=(0x85,0x00)  5B  [00 00 ff 00 00]
+
+# ── Poll until camera signals ready (~700 ms after (85,01)) ─────────────────
 [poll loop]  phone → cam: op=(0x00,0x02) InfoType=0x04  (CAMERA_FUNCTION_INFO)
-             cam → phone: payload[4] = 0x00  (not ready — keep polling)
-             … user presses Share on camera …
+             cam → phone: payload[4] = 0x00  (not ready yet — keep polling)
+             … ~700 ms passes …
              cam → phone: payload[4] != 0x00  ← TRANSFER READY (0x01 or 0x02)
 
 # ── Pull sequence ──────────────────────────────────────────────────────────
@@ -660,19 +899,25 @@ cam → phone: op=(0x88,0x05)  1B  [0x00]                    # done
 > live Python/bleak testing (2026-05-17): expecting two frames causes a 30s timeout on the
 > second recv; dropping to one frame completes the full transfer.
 
-From btsnoop timestamps (new_capture, T offset from session start):
+From btsnoop timestamps (new_capture_0518, Wide Evo, 2026-05-18):
 ```
-T+2616.183s  CAMERA_FUNCTION_INFO transfer-ready flag appears
-T+2616.769s  phone → (88,00)  start
-T+2616.800s  cam   → (88,00)  ready [00 00 00 00 00]
-T+2617.0s    phone → (88,01)  metadata request
-T+2617.0s    cam   → (88,01)  34B metadata
-T+2617.2s    phone → (88,02)  chunk 0
-…            (23 chunks × ~200 ms each)
-T+2621.5s    phone → (88,03)  end
-T+2621.5s    cam   → (88,03)  [00]
-T+2621.5s    phone → (88,05)  complete
-T+2621.5s    cam   → (88,05)  [00]
+T+154.551s   phone → (85,00)  query download state
+T+154.579s   cam   → (85,00)  [00 00 ff 00 00]
+T+154.580s   phone → (85,01)  initiate download  [05 00 00 00 00 00 00 00 00]
+T+154.610s   cam   → (85,01)  [00]  ACK
+T+154.611s   phone → (85,00)  re-query
+T+154.639s   cam   → (85,00)  [00 00 ff 00 00]
+… poll loop continues, flag=0x00 …
+T+155.283s   CAMERA_FUNCTION_INFO flag rises: payload[4] = 0x01
+T+155.855s   phone → (88,00)  start transfer
+T+155.884s   cam   → (88,00)  ready [00 00 00 00 00]
+T+155.887s   phone → (88,01)  metadata request
+T+156.130s   cam   → (88,01)  34B metadata  (243 ms — camera was preparing)
+T+156.x s    phone → (88,02)  chunk 0 … chunk 47
+T+161.468s   phone → (88,03)  end
+T+161.497s   cam   → (88,03)  [00]
+T+161.498s   phone → (88,05)  complete
+T+161.524s   cam   → (88,05)  [00]
 ```
 
 ### 0x88,0x01 metadata layout (34 bytes)

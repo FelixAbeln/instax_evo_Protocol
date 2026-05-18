@@ -208,6 +208,10 @@ class CameraBackend:
                 asyncio.create_task(self._set_flash(msg["value"]))
             elif cmd == "download_photo":
                 asyncio.create_task(self._download_photo())
+            elif cmd == "pull_photo":
+                asyncio.create_task(self._pull_photo_now())
+            elif cmd == "check_queue":
+                asyncio.create_task(self._check_queue_status())
             elif cmd == "print_image":
                 asyncio.create_task(
                     self._print_image(msg["path"], msg.get("enable_print", False))
@@ -987,6 +991,114 @@ class CameraBackend:
             self._liveview = True
             asyncio.create_task(self._liveview_loop())
 
+    async def _pull_photo_now(self):
+        """Trigger camera into transfer mode via (85,xx), then let poll loop pull.
+
+        Protocol confirmed from btsnoop 2026-05-18 — the official app flow:
+          (85,00)  query transfer state      → 5B e.g. [00 00 ff 00 00]
+          (85,01)  initiate download         → [00] ACK; camera enters transfer mode
+          (85,00)  re-query state (confirm)  → 5B
+          ~700 ms later: CAMERA_FUNCTION_INFO flag flips to 0x01
+          poll loop detects flag → (88,00) → full pull
+        """
+        if not self._connected:
+            return
+        if not self._path.supports_image_pull:
+            self._log("Pull photo: not supported on this camera model")
+            return
+        if self._ble_busy:
+            self._log("Pull photo: BLE busy — try again shortly")
+            return
+        self._ble_busy = True
+        try:
+            await self._flush_rx()
+
+            await self._write(make_packet(0x85, 0x00))
+            try:
+                _, _, p = await self._recv_frame(timeout=3.0)
+                self._log(f"  ← (85,00) state={p.hex()}")
+            except asyncio.TimeoutError:
+                self._log("Pull photo: no response to (85,00)")
+                return
+
+            await self._write(make_packet(0x85, 0x01, b"\x05\x00\x00\x00\x00\x00\x00\x00\x00"))
+            try:
+                _, _, p = await self._recv_frame(timeout=3.0)
+                self._log(f"  ← (85,01) ack={p.hex()}")
+            except asyncio.TimeoutError:
+                self._log("Pull photo: no ACK for (85,01)")
+                return
+
+            # Second state check as seen in official app capture
+            await self._write(make_packet(0x85, 0x00))
+            try:
+                _, _, p = await self._recv_frame(timeout=3.0)
+                self._log(f"  ← (85,00) state={p.hex()}")
+            except asyncio.TimeoutError:
+                pass
+
+            self._log("Pull photo: camera entering transfer mode — poll loop will pull")
+        finally:
+            self._ble_busy = False
+
+    async def _check_queue_status(self):
+        """Check download queue depth via the HIST (84,xx) protocol.
+
+        Protocol confirmed from btsnoop capture 2026-05-18 — this is exactly
+        what the official Instax app sends on connect to decide whether to show
+        the download prompt:
+
+          (84,00) HIST_INIT              → 13 B response
+          (84,01) HIST_SCHED  00000000   → 9 B response
+          (84,02) HIST_COMMIT            → 1 B response
+          (84,09) HIST_LIST_REQ slot=02  → 14 B; bytes[10:14] = pending count
+
+        Slot 02 = download queue (photos shared from camera but not yet pulled).
+        """
+        if not self._connected:
+            return
+        if self._ble_busy:
+            self._log("Queue check: BLE busy — try again shortly")
+            return
+        self._ble_busy = True
+        try:
+            await self._flush_rx()
+
+            await self._write(make_packet(0x84, 0x00))
+            try:
+                await self._recv_frame(timeout=3.0)
+            except asyncio.TimeoutError:
+                self._log("Queue check: no response to HIST_INIT")
+                return
+
+            await self._write(make_packet(0x84, 0x01, b"\x00\x00\x00\x00"))
+            try:
+                await self._recv_frame(timeout=3.0)
+            except asyncio.TimeoutError:
+                pass
+
+            await self._write(make_packet(0x84, 0x02))
+            try:
+                await self._recv_frame(timeout=3.0)
+            except asyncio.TimeoutError:
+                pass
+
+            await self._write(make_packet(0x84, 0x09, b"\x02"))
+            try:
+                _, _, p = await self._recv_frame(timeout=3.0)
+            except asyncio.TimeoutError:
+                self._log("Queue check: no response to HIST_LIST_REQ")
+                return
+
+            if len(p) >= 14:
+                count = struct.unpack_from(">I", p, 10)[0]
+                self._log(f"Queue status: {count} image(s) pending download")
+                self._ui("queue_status", count=count)
+            else:
+                self._log(f"Queue check: unexpected response {p.hex()}")
+        finally:
+            self._ble_busy = False
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Camera selection helpers
@@ -1233,6 +1345,16 @@ class InstaxApp:
         )
         self.btn_print.pack(side=tk.LEFT, padx=(0, 4))
 
+        self.btn_pull = ttk.Button(
+            bar, text="Pull Photo", command=self._pull_photo, state="disabled"
+        )
+        self.btn_pull.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.btn_queue_status = ttk.Button(
+            bar, text="Queue Status", command=self._queue_status, state="disabled"
+        )
+        self.btn_queue_status.pack(side=tk.LEFT, padx=(0, 4))
+
         self._status_var = tk.StringVar(value="⬤  Disconnected")
         self._status_lbl = ttk.Label(
             bar, textvariable=self._status_var, foreground=DIM
@@ -1253,10 +1375,11 @@ class InstaxApp:
 
         self._info_vars: dict[str, tk.StringVar] = {}
         for key, label in [
-            ("model",       "Model"),
-            ("serial",      "Serial"),
-            ("battery_pct", "Battery"),
-            ("photos_left", "Photos left"),
+            ("model",         "Model"),
+            ("serial",        "Serial"),
+            ("battery_pct",   "Battery"),
+            ("photos_left",   "Photos left"),
+            ("queue_pending", "Queue pending"),
         ]:
             row = ttk.Frame(info_frame)
             row.pack(fill=tk.X, pady=1)
@@ -1387,6 +1510,8 @@ class InstaxApp:
                 self.btn_disconnect.configure(state="normal")
                 self.btn_liveview.configure(state="normal")
                 self.btn_print.configure(state="normal")
+                self.btn_pull.configure(state="normal")
+                self.btn_queue_status.configure(state="normal")
             elif state in ("disconnected", "error"):
                 label = (
                     "⬤  Disconnected" if state == "disconnected"
@@ -1398,6 +1523,8 @@ class InstaxApp:
                 self.btn_disconnect.configure(state="disabled")
                 self.btn_liveview.configure(state="disabled")
                 self.btn_print.configure(state="disabled")
+                self.btn_pull.configure(state="disabled")
+                self.btn_queue_status.configure(state="disabled")
 
         elif kind == "camera_info":
             bat = msg.get("battery_pct", "?")
@@ -1429,6 +1556,10 @@ class InstaxApp:
             self._xfer_status_var.set(f"✓  {Path(msg['path']).name}")
             self._xfer_bar["value"] = self._xfer_bar["maximum"]
             self._show_thumb(msg["path"])
+
+        elif kind == "queue_status":
+            count = msg.get("count", 0)
+            self._info_vars["queue_pending"].set(str(count) if count else "0")
 
         elif kind == "liveview_frame":
             self._update_liveview(msg["data"])
@@ -1497,6 +1628,12 @@ class InstaxApp:
             self._thumb_lbl.configure(text=f"Preview error: {e}", image="")
 
     # ── live view window ──────────────────────────────────────────────────────
+
+    def _pull_photo(self):
+        self.backend.send_cmd("pull_photo")
+
+    def _queue_status(self):
+        self.backend.send_cmd("check_queue")
 
     def _open_liveview(self):
         if self._liveview_win and self._liveview_win.winfo_exists():

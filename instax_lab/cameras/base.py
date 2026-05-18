@@ -68,22 +68,42 @@ class BaseCameraPath:
             await backend._flush_rx()
 
             # (88,00) start ───────────────────────────────────────────────────
+            # Phone initiates; camera enters transfer mode in response.
+            # Expected ack: [00 00 00 00 00].
+            # 0x81 = camera not in transfer mode (flag not yet raised) —
+            # the caller must ensure CAMERA_FUNCTION_INFO payload[4] != 0 first.
             backend._log("  → (88,00)  start transfer")
             await backend._write(make_packet(0x88, 0x00))
             _, _, ack = await backend._recv_frame(timeout=5.0)
             backend._log(f"  ← (88,00)  ack={ack.hex()}")
 
+            if len(ack) != 5 or ack[0] != 0x00:
+                backend._log(
+                    f"  (88,00) NACK 0x{ack[0]:02x} — camera not in transfer mode"
+                    if ack else "  (88,00) empty ack — aborting"
+                )
+                return False
+
             # (88,01) metadata ────────────────────────────────────────────────
+            # The camera occasionally returns a short/error response immediately
+            # after (88,00) while it's still preparing — retry once after 1 s.
             backend._log("  → (88,01)  request metadata")
             await backend._write(make_packet(0x88, 0x01, b"\x00\x00\x00\x00"))
             _, _, meta = await backend._recv_frame(timeout=5.0)
 
             if len(meta) < 10:
                 backend._log(
-                    f"  Short/error response: {meta.hex()} — retrying in 3 s"
+                    f"  (88,01) short response ({meta.hex()}) — retrying in 1 s"
                 )
-                await asyncio.sleep(3.0)
-                return False
+                await asyncio.sleep(1.0)
+                await backend._flush_rx()
+                await backend._write(make_packet(0x88, 0x01, b"\x00\x00\x00\x00"))
+                _, _, meta = await backend._recv_frame(timeout=5.0)
+                if len(meta) < 10:
+                    backend._log(
+                        f"  Short/error response to (88,01): {meta.hex()} — aborting"
+                    )
+                    return False
 
             total_size    = struct.unpack_from(">I", meta, 1)[0]
             chunk_data_sz = struct.unpack_from(">I", meta, 5)[0]
