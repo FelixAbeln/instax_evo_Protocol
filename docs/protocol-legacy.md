@@ -1,5 +1,16 @@
 
-# Instax Evo BLE Protocol Notes
+# Instax Evo BLE Protocol Notes — LEGACY ARCHIVE
+
+> ⚠️ **This file is the original monolithic protocol notebook, preserved verbatim
+> as a legacy reference.** The active documentation has moved to the
+> [wiki](README.md) — split into topical pages and with "IOS profile"
+> renamed to "Link protocol" throughout the new pages. Nothing has been deleted
+> from this file; all original content (including the now-deprecated `(IOS)` /
+> Android terminology) is retained here for historical traceability.
+>
+> **For current docs, start at [docs/README.md](README.md).**
+
+---
 
 Analysis of the BLE protocol used by the Instax camera/printer family.
 All findings derived from Android bugreport HCI captures cross-referenced with

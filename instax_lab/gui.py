@@ -97,6 +97,11 @@ class CameraBackend:
         self._img_w = 0   # populated from IMAGE_SUPPORT_INFO on connect
         self._img_h = 0
 
+        # Live shot/print counters from CAMERA_HISTORY_INFO and
+        # PRINTER_FUNCTION_INFO; updated by the poll loop.  -1 = not yet read.
+        self._shot_counter  = -1
+        self._print_counter = -1
+
         # Camera path: selects model-specific behaviour after model detection.
         # Defaults to the base (FI028-like) path until the model is known.
         self._path: BaseCameraPath = BaseCameraPath()
@@ -425,6 +430,33 @@ class CameraBackend:
         except asyncio.TimeoutError:
             pass
 
+        # Evo-specific session registers (required for live HIST tracking).
+        # Without these, the camera STOPS writing new shot records to its
+        # internal HIST buffer for the duration of the BLE session, so the
+        # "image total" counter never advances while we are connected.
+        # See docs/session-init.md.
+        try:
+            await self._write(make_packet(0x20, 0x10))             # FW_PROGRAM_INFO
+            await self._recv_frame(timeout=3.0)
+        except asyncio.TimeoutError:
+            self._log("  warn: no reply to (0x20,0x10) FW_PROGRAM_INFO")
+        try:
+            await self._write(make_packet(0x80, 0x10, b"\x00"))    # Evo session reg
+            await self._recv_frame(timeout=3.0)
+        except asyncio.TimeoutError:
+            self._log("  warn: no reply to (0x80,0x10) session register")
+
+        # Seed the live shot counter once at connect; the poll loop refreshes
+        # it continuously. See docs/history-log.md.
+        try:
+            await self._write(make_packet(0x00, 0x02, b"\x05"))
+            _, _, hp = await self._recv_frame(timeout=3.0)
+            if len(hp) >= 6:
+                self._shot_counter = hp[5]
+                info["shot_counter"] = hp[5]
+        except asyncio.TimeoutError:
+            pass
+
         self._ui("camera_info", **info)
         bat = info.get("battery_pct", "?")
         pht = info.get("photos_left", "?")
@@ -480,6 +512,28 @@ class CameraBackend:
                 continue
 
             flag = p[4] if len(p) > 4 else 0
+
+            # Piggy-back a live shot-counter read on every poll cycle.
+            # CAMERA_HISTORY_INFO (00,02 InfoType=0x05) returns a 6-byte payload
+            # whose last byte (= response payload[5]) is the lifetime shot
+            # counter; it increments for EVERY shot including those taken while
+            # BLE is connected. Reading is non-destructive — safe to poll.
+            # See docs/history-log.md "Runtime polling for live counters".
+            try:
+                await self._write(make_packet(0x00, 0x02, b"\x05"))
+                _, _, hp = await self._recv_frame(timeout=2.0)
+                if len(hp) >= 6:
+                    cnt = hp[5]
+                    if cnt != self._shot_counter:
+                        prev = self._shot_counter
+                        self._shot_counter = cnt
+                        if prev >= 0 and cnt != prev:
+                            self._log(f"Shot counter: {prev} → {cnt}")
+                        self._ui("shot_counter", count=cnt)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
 
             if flag != 0x00:
                 # Respect both the path's static capability flag and the

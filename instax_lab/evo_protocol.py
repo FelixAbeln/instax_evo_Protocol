@@ -251,6 +251,19 @@ class InstaxCamera:
         if len(p) >= 3:
             self.photos_left = p[2] & 0x0F
 
+        # Evo-specific session registers (required for live HIST tracking).
+        # Without these the camera does NOT log shots taken while BLE is
+        # connected, so the image-total counter never advances.
+        # See docs/session-init.md.
+        try:
+            await self._send_recv(0x20, 0x10, timeout=3.0)            # FW_PROGRAM_INFO
+        except asyncio.TimeoutError:
+            self._log("warn: no reply to (0x20,0x10) FW_PROGRAM_INFO")
+        try:
+            await self._send_recv(0x80, 0x10, b'\x00', timeout=3.0)   # Evo session reg
+        except asyncio.TimeoutError:
+            self._log("warn: no reply to (0x80,0x10) session register")
+
         return {
             "manufacturer":  self.manufacturer,
             "model":         self.model,

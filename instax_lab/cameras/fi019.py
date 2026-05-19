@@ -8,7 +8,7 @@ Key differences from the Wide Evo (FI028):
     when the user presses the Share button, but we must NOT act on it with
     (88,xx).
 
-  * Live view (82,xx) IS supported — confirmed working on
+  * Live view (82,xx) IS NOT supported — confirmed it possbile in testing but not gotten it to work fully yet.  The camera does send some response frames to (82,00) but they don't appear to contain valid image data; more investigation needed.
     FA:AB:BC:11:6F:D2 (FI019) on 2026-05-17.
 
   * Print (10,xx) is expected to work (same IOS Link framing) but has not
