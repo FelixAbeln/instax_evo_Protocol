@@ -19,7 +19,7 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 | Live view (pull loop) | ✅ | ⚠️ Partial — worked then failed; needs more investigation | `(82,00/01/02)` |
 | Auto-transfer after shutter (inline) | ✅ seamless LV resume | ❓ Unknown — `(82,10/20/21/22)` untested on Gen 1 | `(82,10/20/21/22)` |
 | Share-button image pull | ✅ | ❌ Camera disconnects on `(88,00)` | `(88,00…0b)` |
-| History log / shot & print counts | ✅ Slot format + record sizes confirmed; HIST payload structure confirmed; per-effect breakdown via real-time tracking | ⏳ Not tested | `(84,xx)` `(00,02)` InfoType 5 |
+| History log / shot & print counts | ✅ Slot format + record sizes confirmed; HIST buffer **fully mapped** — 37×44-byte diagonal-banded tally; Films 1–10 all 10 lens positions each confirmed live 2026-05-19; structural pattern (20 flat-position stride) confirmed; Film=1 and Film=3 DE-slot deviations documented | ⏳ Not tested | `(84,xx)` `(00,02)` InfoType 5 |
 | Live shot counter (per-effect tracking) | ✅ `CAMERA_HISTORY_INFO` byte[2] increments per shot; confirmed live 2026-05-18 | ❓ Unknown | `(00,02)` InfoType 5 |
 | `(82,10/20/21/22)` via Share button | ❓ Only seen after shutter | ❓ Unknown | — |
 | Camera settings registers (0x0B–0x1B) | ✅ Values observed; Flash write confirmed; others read-only | ❓ Unknown | `(80,11)` read/write |
@@ -221,12 +221,12 @@ cross-referenced with the gen 2 Evo Wide HCI capture:
 | 0x10 | 0x80 | `PRINT_IMAGE` | Trigger the print |
 | 0x10 | 0x81 | `REJECT_FILM_COVER` | |
 | 0x20 | 0x00 | `FW_DOWNLOAD_START` | Firmware update |
-| 0x20 | 0x10 | `FW_PROGRAM_INFO` | Firmware version query — seen in gen 2 |
+| 0x20 | 0x10 | `FW_PROGRAM_INFO` | Capability/firmware query. **P→C:** empty. **C→P:** 3B `[00 00 00]`. Sent once at session start (after `(00,00)`, before `(80,10)`). Confirmed btsnoop 2026-05-18. |
 | 0x30 | 0x00 | `XYZ_AXIS_INFO` | Accelerometer |
 | 0x30 | 0x01 | `LED_PATTERN_SETTINGS` | |
 | 0x80 | 0x00 | `CAMERA_SETTINGS` | Evo-specific camera setting write |
 | 0x80 | 0x01 | `CAMERA_SETTINGS_GET` | Evo-specific camera setting read |
-| 0x80 | 0x10 | *(Evo-specific)* | Read config register bank (gen 2 observed) |
+| 0x80 | 0x10 | *(Evo-specific session register)* | **P→C:** `[0x00]` (1B). **C→P:** 10B `[00 00 02 00 03 00 00 00 00 00]`. Sent once at session start after `(20,10)`. **Required for live HIST tracking** — without it the camera does not log shots to HIST while BLE is connected. Confirmed btsnoop 2026-05-18. |
 | 0x80 | 0x11 | *(Evo-specific)* | Read/write individual register. **Read:** payload `[reg_id][0x00×5]`; camera replies `[0x00][reg_id][value][0x00×3]`. **Write:** payload `[reg_id][0x02][value][0x00×3]`; camera replies `[0x00][reg_id][0x00×4]`. See [Flash Control](#flash-control--set_info-0x8011) for reg_id=0x0B (flash mode). |
 | 0x80 | 0x15 | `LIVE_VIEW_PREPARE` | Sent before `0x82,0x00`. Phone payload = 17×0x00. Camera response: Mini Evo = `[0xBF]` (1B); Wide Evo = 17B with byte[8]=0x32. |
 | 0x82 | 0x00 | `LIVE_VIEW_START` | Payload = `[1B slot_index]`; camera ACKs with `[slot_index]`. |
@@ -282,7 +282,7 @@ Response payload format: `[0x00][InfoType_echo][data…]`
 | 0x02 | `PRINTER_FUNCTION_INFO` | `[status_byte][0x00][shots_in_pack: 2B]…`. `photos_left = status_byte & 0x0F`, `charging = bool(status_byte & 0x80)`. Wide Evo: status=0x26 → 6 remaining, shots_in_pack=0x000C=12. |
 | 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: field_a][uint32 BE: field_b]`. Semantics TBD — does **not** directly report total shots or prints. Bugreport 0518 example: `00000009 00000005` (field_a=9, field_b=5). See HIST `(84,xx)` for the shot/print counts shown in the app's Usage History screen. |
 | 0x04 | `CAMERA_FUNCTION_INFO` | 16B data. **`data[2]` (= full payload[4]) = `0x01` when camera is in transfer-ready state**; `0x00` at rest. The flag is raised by the camera ~700 ms after the phone sends `(0x85,0x01)` DOWNLOAD_INITIATE — it does **not** rise on its own. Confirmed from btsnoop 2026-05-18. Normal response (Wide Evo): `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`; `data[0]`=0x03, `data[1]`=0x50. Semantics of other bytes TBD. |
-| 0x05 | `CAMERA_HISTORY_INFO` | `[0x00][0x00][counter: 1B]` (Wide Evo). **Confirmed: live shot counter.** Increments by 1 with each photo taken. Bugreport 0518 (session 1): counter=`0x26`=38; session 2 (two photos taken between sessions): counter=`0x28`=40; observed incrementing `0x28`→`0x29`→`0x2a`→`0x2b` (3 shots) in real-time in the live btsnoop. |
+| 0x05 | `CAMERA_HISTORY_INFO` | 6B response `[0x00][0x05][0x00][0x00][0x00][counter]`. **Counter at pay[5]** (confirmed, btsnoop 2026-05-18). Increments for **every** shot fired, including shots taken while BLE is connected to a third-party script (i.e. shots that are **not** written to HIST). The app's "Shots" total comes from `HIST_GET_DATA` record counts, not from this counter — so counter and app shot count can diverge. Bugreport 0518 example: counter=`0x28`=40 at session start; incremented `0x28`→`0x29`→`0x2a`→`0x2b` (+3) in real-time during that btsnoop session. |
 
 ### Film dimensions by model / print mode
 
@@ -458,8 +458,10 @@ op=(0x00,0x01)  [0x05]                → "0000"      (unknown)
 op=(0x00,0x01)  [0x09]                → (empty)
 op=(0x00,0x01)  [0x0A]                → (empty)
 op=(0x00,0x02)  [0x00]                IMAGE_SUPPORT_INFO → 1260×840 (Wide confirmed) ✓
-op=(0x20,0x10)  []                    FW_PROGRAM_INFO → firmware version bytes
-op=(0x80,0x10)  []                    [Evo] config register bank → 0x00020003
+op=(0x20,0x10)  []                    FW_PROGRAM_INFO — P→C empty; C→P 3B `[00 00 00]` (confirmed btsnoop 2026-05-18)
+op=(0x80,0x10)  [0x00]               [Evo] session register — P→C 1B `[0x00]`; C→P 10B `[00 00 02 00 03 00 00 00 00 00]`.
+                                     **Required for live HIST tracking.** Without this opcode the camera does not
+                                     write HIST records for shots taken while BLE is connected (confirmed 2026-05-18).
 op=(0x80,0x11)  [0x0B, 0,0,0,0]      [Evo] read reg 0x0B → 2   (Flash/WB: write confirmed as flash; read=2 suspected WB=AUTO)
 op=(0x80,0x11)  [0x0C, 0,0,0,0]      → 0   (suspected Film Style: 0=OFF)
 op=(0x80,0x11)  [0x13, 0,0,0,0]      → 0   (unknown)
@@ -529,15 +531,22 @@ cam → phone: op=(0x84,0x0b)  2B   [slot:2B]                        # HIST_DONE
 
 > **HIST slot read-and-acknowledge behavior (confirmed, bugreport 2026-05-18):**
 >
-> - The camera **writes new shot records in real-time** even while BLE is connected.
->   After each shot, `HIST_LIST_REQ (84,09)` for slot 0 returns `count=1` (data ready).
-> - During a live session the iOS app issues `HIST_DONE (84,0b)` to acknowledge the new record
->   **without** reading it via `HIST_GET_DATA (84,0a)`. Per-effect counting is done in real-time
->   by tracking `CAMERA_HISTORY_INFO` byte[2] (shot counter) + reg `0x17`/`0x1b` at each increment.
-> - `HIST_GET_DATA (84,0a)` is only sent at session start (once per slot). Both reads return the
->   **cumulative historical** record set (shots/prints accumulated before this BLE connection).
-> - Shots taken while BLE is connected are written to the cumulative HIST after the session ends
->   (pending confirmation — requires disconnect + reconnect capture with non-Normal effects).
+> - The camera **writes new shot records in real-time** even while BLE is connected,
+>   **but only if the session sent `(80,10)` during init** (the official Instax app always sends it;
+>   scripts that omit `(80,10)` will never see `count=1` for connected shots).
+> - **Timing:** The camera writes the HIST record **~3–4 seconds after the physical shutter fires**.
+>   `HIST_LIST_REQ (84,09)` polled too quickly (<3 s after the shot) will return `count=0`.
+>   The official app's HIST poll cycle runs every ~10–15 s and naturally avoids this.
+>   Wait at least 3 s after detecting a shot (via `CAMERA_HISTORY_INFO`) before querying `84,09`.
+> - After each shot: `HIST_LIST_REQ (84,09)` for slot 0 returns `count=1` (data ready).
+>   The iOS app then: (a) sends `HIST_GET_DATA (84,0a)` to read the record, (b) sends `HIST_DONE
+>   (84,0b)` 129 ms later **without waiting for the full (84,0a) response** — the response arrives
+>   asynchronously in that 129 ms window. Scripts should await the full `(84,0a)` response.
+> - During a live session the iOS app may also skip `HIST_GET_DATA` (issue `HIST_DONE` only).
+>   Per-effect counting is then done in real-time via `CAMERA_HISTORY_INFO` (sub=05 shot counter)
+>   + reg `0x17` (Film Effect) / `0x1b` (Lens Effect) at each counter increment.
+> - `HIST_GET_DATA (84,0a)` at session start (once per slot) returns the **cumulative historical**
+>   record set (shots/prints accumulated from all sessions, including disconnected use).
 
 #### HIST_LIST_REQ (84,09) — slot metadata
 
@@ -578,36 +587,529 @@ The app **counts the number of event records** in each slot to produce the shot 
 shown in the Usage History screen. The date string in the record header is the camera's RTC date
 (`"20260618"` = 2026-06-18 in the bugreport 0518 session).
 
-#### Shot record (44 bytes) — field layout
+#### Shot record (44 bytes) — field layout (HISTOGRAM structure, **not** individual shot records)
 
-Two captures compared (all-Normal baseline vs. session after 2 non-Normal shots):
+> **2026-05-19 live-test correction:** The 1628-byte body is a **fixed-size tally buffer**, not a
+> list of 37 individual shot records. The camera always returns exactly 1636 bytes for slot 0
+> (8B date + 1628B data), so the “37 records” count is the arithmetic artefact 1628 ÷ 44 = 37
+> and carries no meaning by itself. The actual encoding is a 37×44-byte 2D histogram.
+>
+> **`HIST_DONE (84,0b)` clears the buffer.** After sending 84,0b, the camera resets all
+> tally counts to zero. The next `HIST_GET_DATA (84,0a)` only contains shots accumulated
+> *since the last 84,0b*. Consequence: every call to `read_hist()` in our scripts clears the
+> buffer — subsequent reads start fresh.
+>
+> **`(80,10)` required for live logging (confirmed).** With the new session init, taking a shot
+> while BLE-connected IS written to the HIST buffer (confirmed live 2026-05-19). Without
+> `(80,10)` the camera ignored connected shots entirely.
 
-**Bugreport 0518, session 1** (all 37 shots Normal film + Normal lens):
+**HIST buffer structure — FULLY CONFIRMED (2026-05-19 live systematic scan):**
+
+The 37×44-byte body is a 2D shot-count histogram indexed as:
+
 ```
-rec[ 0]: 00 01 00 00 00 01 00 00 [00 × 36]
-rec[ 1]…rec[35]: [00 × 44]   (all zeros)
-rec[36]: [00 × 21] 01 [00 × 22]
+rec[film_reg − 1][lens_reg]  ← shot count for that Film+Lens combination
 ```
 
-**Session 2** (after 2 shots with non-Normal effects — Film #2 Vivid and Lens #10 Beam Flare — taken before this BLE connection):
+where `film_reg` is the value returned by register `0x17` and `lens_reg` is the byte
+position (always an **odd** number) within the 44-byte record.
+
+**Fixed global counters (written for every shot, regardless of Film/Lens setting):**
+
+| Cell | Meaning |
+|------|---------|
+| `rec[0][1]`  | **Global total shots counter** — incremented for every shot |
+| `rec[36][21]` | **Global total shots mirror** — identical to `rec[0][1]` |
+
+**Decoding a live shot:** The camera increments three cells per shot:
+1. `rec[0][1]` — global total
+2. `rec[film_reg − 1][lens_reg]` — per-Film+Lens tally
+3. `rec[36][21]` — global total mirror
+
+When Film=1 (Normal) + Lens=Normal (lens_reg=1): cell 1 (`rec[0][1]`) and cell 2
+(`rec[0][1]`) coincide — the global counter and the per-combo counter are the same byte,
+so only two distinct cells light up (global total and mirror).
+
+---
+
+#### Film mode and lens effect names (confirmed from app “Usage History”, 2026-05-19)
+
+The app’s **Usage History** screen has two tabs:
+- **Film Effect** tab — shows shot count per lens effect for the current film mode selection
+- **Lens Effect** tab — shows shot count per film mode
+
+The 10 lens effect names are **identical across all 10 film modes** — lens effect #1 is always
+“Normal” regardless of which film mode is active.
+
+| Film # | Film mode name (`reg 0x17`) | | Lens # | Lens effect name (`reg 0x1b`) |
+|--------|----------------------------|-|--------|-------------------------------|
+| 1 | Normal | | 1 | Normal |
+| 2 | Vivid | | 2 | Light Leak |
+| 3 | Warm | | 3 | Light Prism |
+| 4 | Sky Blue | | 4 | Vignette |
+| 5 | Light Green | | 5 | Soft Glow |
+| 6 | Magenta | | 6 | Double Ex. |
+| 7 | Sepia | | 7 | Color Shift |
+| 8 | Monochrome | | 8 | Monochrome Blur |
+| 9 | Amber | | 9 | Color Gradient |
+| 10 | Summer | | 10 | Beam Flare |
+
+> **Note on Double Ex. (lens #6):** In Film=3 (Warm), the Double Ex. slot at rec[2][7] never
+> increments from a single shutter press — the effect requires two sequential app presses to fire.
+> In all other film modes the #6 slot was confirmed to increment normally.
+
+---
+
+#### Film=1 (Normal) — confirmed lens_reg mapping (complete, all 10 effects)
+
+Confirmed by systematic live scan (shots 48→57, 2026-05-19). The user swept lens positions
+#02 through #10 in order; bytes matched the pattern in `rec[0]`.
+
+| App lens # | Effect name | `lens_reg` (byte in `rec[0]`) | Confirmed |
+|-----------|-------------|-------------------------------|-----------|
+| #01 | Normal | **1** | ✓ (global total = same cell) |
+| #02 | Light Leak | **5** | ✓ live (shot 48→49) |
+| #03 | Light Prism | **7** | ✓ live (shot 49→50) |
+| #04 | Vignette | **9** | ✓ live (shot 50→51) |
+| #05 | Soft Glow | **11** | ✓ live (shot 51→52) |
+| #06 | Double Ex. | **13** | ✓ live (shot 52→53) |
+| *(gap)* | *(no effect at byte 15 for Film=1)* | — | ✓ (15 never seen) |
+| #07 | Color Shift | **17** | ✓ live (shot 53→54) |
+| #08 | Monochrome Blur | **19** | ✓ live (shot 54→55) |
+| #09 | Color Gradient | **21** | ✓ live (shots 40→41, 55→56) |
+| #10 | Beam Flare | **23** | ✓ live (shot 56→57) |
+
+Film=1 lens_reg sequence: 1 · 5 · 7 · 9 · 11 · 13 · **[skip 15]** · 17 · 19 · 21 · 23.
+Byte 3 is also absent for Film=1 — it is used only by Film=2.
+
+---
+
+#### Film=2 (Vivid) — confirmed lens_reg mapping (COMPLETE — all 10 positions confirmed 2026-05-19)
+
+Confirmed by systematic live scan (shots 57→67, one shot per lens position in order).
+Film=2 uses a clean consecutive odd-byte sequence 1–19 with **no skips**.
+
+| App lens # | Effect name | `lens_reg` (byte in `rec[1]`) | Confirmed |
+|-----------|-------------|-------------------------------|-----------|
+| #01 | Normal | **1** | ✓ live (shot 57→58) |
+| #02 | Light Leak | **3** | ✓ live (shot 58→59) |
+| #03 | Light Prism | **5** | ✓ live (shot 59→60) |
+| #04 | Vignette | **7** | ✓ live (shot 60→61) |
+| #05 | Soft Glow | **9** | ✓ live (shot 61→62) |
+| #06 | Double Ex. | **11** | ✓ live (shot 62→63) |
+| #07 | Color Shift | **13** | ✓ live (shot 63→64) |
+| #08 | Monochrome Blur | **15** | ✓ live (shot 64→65) |
+| #09 | Color Gradient | **17** | ✓ live (shot 65→66) |
+| #10 | Beam Flare | **19** | ✓ live (shot 66→67) |
+
+Film=2 lens_reg sequence (complete): 1 · 3 · 5 · 7 · 9 · 11 · 13 · 15 · 17 · 19  
+Note: Byte 11 IS used by Film=2 (correcting earlier partial data). Film=2 uses no skipped bytes.
+
+---
+
+#### Film=3 (Warm) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-06-19)
+
+Film=3 spans **two** record rows (rec[1] and rec[2]), starting at byte 41 of rec[1].
+One lens slot is special at rec[2][7] — this is the Double Exposure lens which requires
+two sequential app presses to complete one DE cycle. The HIST counter at rec[2][7]
+increments **once per completed cycle** (i.e. after the second press). A single shutter
+press leaves no trace in HIST.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[1] | **41** | 42 | ✓ live (shot 72→73) |
+| #02 | Light Leak | rec[1] | **43** | 43 | ✓ live (shot 73→74) |
+| #03 | Light Prism | rec[2] | **1** | 44 | ✓ live (shot 74→75) |
+| #04 | Vignette | rec[2] | **3** | 45 | ✓ live (shot 75→76) |
+| #05 | Soft Glow | rec[2] | **5** | 46 | ✓ live (shot 76→77) |
+| #06 | Double Ex. | rec[2] | **7** | 47 | ✓ live (2-press cycle confirmed 2026-05-19; +1 per completed cycle) |
+| #07 | Color Shift | rec[2] | **9** | 48 | ✓ live (shot 77→78) |
+| #08 | Monochrome Blur | rec[2] | **11** | 49 | ✓ live (shot 78→79) |
+| #09 | Color Gradient | rec[2] | **13** | 50 | ✓ live (shot 79→80) |
+| #10 | Beam Flare | rec[2] | **15** | 51 | ✓ live (shot 80→81) |
+
+Film=3 flat positions: 42–51 (with gap at 47 for DE slot). Start flat = **42**.
+
+---
+
+#### Film=4 (Sky Blue) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-06-19)
+
+Film=4 spans rec[2] (bytes 37–43) and rec[3] (bytes 1–11). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[2] | **37** | 62 | ✓ live (shot 81→82) |
+| #02 | Light Leak | rec[2] | **39** | 63 | ✓ live (shot 82→83) |
+| #03 | Light Prism | rec[2] | **41** | 64 | ✓ live (shot 83→84) |
+| #04 | Vignette | rec[2] | **43** | 65 | ✓ live (shot 84→85) |
+| #05 | Soft Glow | rec[3] | **1** | 66 | ✓ live (shot 85→86) |
+| #06 | Double Ex. | rec[3] | **3** | 67 | ✓ live (shot 86→87) |
+| #07 | Color Shift | rec[3] | **5** | 68 | ✓ live (shot 87→88) |
+| #08 | Monochrome Blur | rec[3] | **7** | 69 | ✓ live (shot 88→89) |
+| #09 | Color Gradient | rec[3] | **9** | 70 | ✓ live (shot 89→90) |
+| #10 | Beam Flare | rec[3] | **11** | 71 | ✓ live (shot 90→91) |
+
+Film=4 flat positions: 62–71 (consecutive, no skips). Start flat = **62**.
+
+---
+
+#### Film=5 (Light Green) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-06-19)
+
+Film=5 spans rec[3] (bytes 33–43) and rec[4] (bytes 1–7). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[3] | **33** | 82 | ✓ live (shot 91→92) |
+| #02 | Light Leak | rec[3] | **35** | 83 | ✓ live (shot 92→93) |
+| #03 | Light Prism | rec[3] | **37** | 84 | ✓ live (shot 93→94) |
+| #04 | Vignette | rec[3] | **39** | 85 | ✓ live (shot 94→95) |
+| #05 | Soft Glow | rec[3] | **41** | 86 | ✓ live (shot 95→96) |
+| #06 | Double Ex. | rec[3] | **43** | 87 | ✓ live (shot 96→97) |
+| #07 | Color Shift | rec[4] | **1** | 88 | ✓ live (shot 97→98) |
+| #08 | Monochrome Blur | rec[4] | **3** | 89 | ✓ live (shot 98→99) |
+| #09 | Color Gradient | rec[4] | **5** | 90 | ✓ live (shot 99→100) |
+| #10 | Beam Flare | rec[4] | **7** | 91 | ✓ live (shot 100→101) |
+
+Film=5 flat positions: 82–91 (consecutive, no skips). Start flat = **82**.
+
+---
+
+#### Film=6 (Magenta) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-06-19)
+
+Film=6 spans rec[4] (bytes 29–43) and rec[5] (bytes 1–3). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[4] | **29** | 102 | ✓ live (shot 100→101) |
+| #02 | Light Leak | rec[4] | **31** | 103 | ✓ live (shot 101→102) |
+| #03 | Light Prism | rec[4] | **33** | 104 | ✓ live (shot 102→103) |
+| #04 | Vignette | rec[4] | **35** | 105 | ✓ live (shot 103→104) |
+| #05 | Soft Glow | rec[4] | **37** | 106 | ✓ live (shot 104→105) |
+| #06 | Double Ex. | rec[4] | **39** | 107 | ✓ live (shot 105→106) |
+| #07 | Color Shift | rec[4] | **41** | 108 | ✓ live (shot 106→107) |
+| #08 | Monochrome Blur | rec[4] | **43** | 109 | ✓ live (shot 107→108) |
+| #09 | Color Gradient | rec[5] | **1** | 110 | ✓ live (shot 108→109) |
+| #10 | Beam Flare | rec[5] | **3** | 111 | ✓ live (shot 109→110) |
+
+Film=6 flat positions: 102–111 (consecutive, no skips). Start flat = **102**.
+
+---
+
+#### Film=7 (Sepia) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-06-19)
+
+Film=7 lies entirely within rec[5] (bytes 25–43). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[5] | **25** | 122 | ✓ live (shot 110→111) |
+| #02 | Light Leak | rec[5] | **27** | 123 | ✓ live (shot 111→112) |
+| #03 | Light Prism | rec[5] | **29** | 124 | ✓ live (shot 112→113) |
+| #04 | Vignette | rec[5] | **31** | 125 | ✓ live (shot 113→114) |
+| #05 | Soft Glow | rec[5] | **33** | 126 | ✓ live (shot 114→115) |
+| #06 | Double Ex. | rec[5] | **35** | 127 | ✓ live (shot 115→116) |
+| #07 | Color Shift | rec[5] | **37** | 128 | ✓ live (shot 116→117) |
+| #08 | Monochrome Blur | rec[5] | **39** | 129 | ✓ live (shot 117→118) |
+| #09 | Color Gradient | rec[5] | **41** | 130 | ✓ live (shot 118→119) |
+| #10 | Beam Flare | rec[5] | **43** | 131 | ✓ live (shot 119→120) |
+
+Film=7 flat positions: 122–131 (consecutive, no skips). Start flat = **122**.
+
+---
+
+#### Film=8 (Monochrome) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-06-19)
+
+Film=8 spans rec[6] (bytes 21–39). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[6] | **21** | 142 | ✓ live (shot 120→121) |
+| #02 | Light Leak | rec[6] | **23** | 143 | ✓ live (shot 121→122) |
+| #03 | Light Prism | rec[6] | **25** | 144 | ✓ live (shot 122→123) |
+| #04 | Vignette | rec[6] | **27** | 145 | ✓ live (shot 123→124) |
+| #05 | Soft Glow | rec[6] | **29** | 146 | ✓ live (shot 124→125) |
+| #06 | Double Ex. | rec[6] | **31** | 147 | ✓ live (shot 125→126) |
+| #07 | Color Shift | rec[6] | **33** | 148 | ✓ live (shot 126→127) |
+| #08 | Monochrome Blur | rec[6] | **35** | 149 | ✓ live (shot 127→128) |
+| #09 | Color Gradient | rec[6] | **37** | 150 | ✓ live (shot 128→129) |
+| #10 | Beam Flare | rec[6] | **39** | 151 | ✓ live (shot 129→130) |
+
+Film=8 flat positions: 142–151 (consecutive, no skips). Start flat = **142**.
+
+---
+
+#### Film=9 (Amber) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-05-19)
+
+Film=9 lies entirely within rec[7] (bytes 17–35). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[7] | **17** | 162 | ✓ live (shot 130→131) |
+| #02 | Light Leak | rec[7] | **19** | 163 | ✓ live (shot 131→132) |
+| #03 | Light Prism | rec[7] | **21** | 164 | ✓ live (shot 132→133) |
+| #04 | Vignette | rec[7] | **23** | 165 | ✓ live (shot 133→134) |
+| #05 | Soft Glow | rec[7] | **25** | 166 | ✓ live (shot 134→135) |
+| #06 | Double Ex. | rec[7] | **27** | 167 | ✓ live (shot 135→136) |
+| #07 | Color Shift | rec[7] | **29** | 168 | ✓ live (shot 136→137) |
+| #08 | Monochrome Blur | rec[7] | **31** | 169 | ✓ live (shot 137→138) |
+| #09 | Color Gradient | rec[7] | **33** | 170 | ✓ live (shot 138→139) |
+| #10 | Beam Flare | rec[7] | **35** | 171 | ✓ live (shot 139→140) |
+
+Film=9 flat positions: 162–171 (consecutive, no skips). Start flat = **162**.
+
+---
+
+#### Film=10 (Summer) — confirmed position mapping (COMPLETE — all 10 positions confirmed 2026-05-19)
+
+Film=10 lies entirely within rec[8] (bytes 13–31). No skips.
+
+| App lens # | Effect name | `rec` | `byte` | flat idx | Confirmed |
+|-----------|-------------|-------|--------|----------|-----------|
+| #01 | Normal | rec[8] | **13** | 182 | ✓ live (shot 140→141) |
+| #02 | Light Leak | rec[8] | **15** | 183 | ✓ live (shot 141→142) |
+| #03 | Light Prism | rec[8] | **17** | 184 | ✓ live (shot 142→143) |
+| #04 | Vignette | rec[8] | **19** | 185 | ✓ live (shot 143→144) |
+| #05 | Soft Glow | rec[8] | **21** | 186 | ✓ live (shot 144→145) |
+| #06 | Double Ex. | rec[8] | **23** | 187 | ✓ live (shot 145→146) |
+| #07 | Color Shift | rec[8] | **25** | 188 | ✓ live (shot 146→147) |
+| #08 | Monochrome Blur | rec[8] | **27** | 189 | ✓ live (shot 147→148) |
+| #09 | Color Gradient | rec[8] | **29** | 190 | ✓ live (shot 148→149) |
+| #10 | Beam Flare | rec[8] | **31** | 191 | ✓ live (shot 149→150) |
+
+Film=10 flat positions: 182–191 (consecutive, no skips). Start flat = **182**.
+
+---
+
+#### HIST buffer allocation — structural pattern (confirmed 2026-05-19, all 10 film modes)
+
+The HIST buffer encodes film mode positions using a diagonal banding structure.
+
+**Flat-index addressing:**
+
+Each odd byte in the 37×44 grid has a flat index:
+
 ```
-rec[ 0]: 00 01 00 00 00 00 00 00 [00 × 36]   ← byte 5 cleared
-rec[ 1]: 00 00 … 00 01 00 … 00              ← byte 19 = 0x01 (new)
-rec[ 2]…rec[35]: [00 × 44]   (all zeros)
-rec[36]: [00 × 21] 01 [00 × 22]             ← unchanged
+flat_idx = rec_num × 22 + (byte − 1) // 2
 ```
 
-Observations from comparing the two sessions:
-- `rec[0]` byte 1 = `0x01` — present in both; semantics TBD
-- `rec[0]` byte 5 = `0x01` in session 1 → `0x00` in session 2 (cleared after 2 non-Normal shots)
-- `rec[1]` byte 19 = `0x01` — appeared after the user's Vivid+Beam Flare shots; candidate for **Film Effect #2 (Vivid)** or **Lens Effect #10 (Beam Flare)** field
-- `rec[36]` byte 21 = `0x01` — unchanged across both sessions; semantics TBD
+Only odd bytes carry data (lens_reg values are always odd).
 
-> **Film/Lens effect byte positions are NOT yet decoded.** The per-effect breakdown shown in the
-> app (Normal=37, Vivid=2, Beam Flare=2) comes from the app's **real-time tracking** of
-> `reg 0x17` / `reg 0x1b` at each shot, not from reading these bytes. The 44-byte HIST record
-> likely stores per-category tallies or flags, but the exact encoding requires controlled captures
-> with known non-Normal effects taken **while BLE-disconnected** (so they appear in HIST slot reads).
+**Film mode start positions (all 10 confirmed):**
+
+| Film | Start flat | rec[R] start byte | Formula | Status |
+|------|-----------|-------------------|---------|--------|
+| Film=1 | 0 | rec[0][1] | special (see deviations below) | ✓ confirmed |
+| Film=2 | 22 | rec[1][1] | — | ✓ confirmed |
+| Film=3 | 42 | rec[1][41] | 22 + 1×20 | ✓ confirmed |
+| Film=4 | 62 | rec[2][37] | 22 + 2×20 | ✓ confirmed |
+| Film=5 | 82 | rec[3][33] | 22 + 3×20 | ✓ confirmed |
+| Film=6 | 102 | rec[4][29] | 22 + 4×20 | ✓ confirmed |
+| Film=7 | 122 | rec[5][25] | 22 + 5×20 | ✓ confirmed |
+| Film=8 | 142 | rec[6][21] | 22 + 6×20 | ✓ confirmed |
+| Film=9 | 162 | rec[7][17] | 22 + 7×20 | ✓ confirmed |
+| Film=10 | 182 | rec[8][13] | 22 + 8×20 | ✓ confirmed |
+
+For Film=N (N ≥ 2): **start_flat = 20N − 18**
+
+Each film mode occupies **10 consecutive flat positions** (10 lens slots). The 10 positions following
+each block (flat positions +10 through +19) are unused/gap. Total stride = 20 flat positions.
+
+The starting byte within the leading record decreases by 4 per film mode:
+- Film=3 starts at byte 41; Film=4 at 37; Film=5 at 33; Film=6 at 29; Film=7 at 25; Film=8 at 21; Film=9 at 17; Film=10 at 13.
+- General formula (Film=N, N≥3): **start_byte = 53 − 4N** within rec[N−2]
+
+**Consequence:** Film modes from Film=3 onward straddle two record rows when their 10-position
+block crosses a record boundary (a record holds 22 usable odd bytes). Film=7 is the first mode
+to fit entirely within a single record row; Films 7–10 each fit within one record.
+
+**Predicted future film modes (if camera has Film=11+):**
+
+| Film | Start flat | rec start |
+|------|-----------|-----------|
+| Film=11 | 202 | rec[9][9] |
+| Film=12 | 222 | rec[10][5] |
+
+---
+
+#### Lens mapping summary — all 10 confirmed film modes
+
+| Film | rec range | bytes used (lens #01 … #10) | DE slot | Start flat |
+|------|-----------|-----------------------------|---------|-----------:|
+| Film=1 | rec[0] | 1, 5, 7, 9, 11, 13, **—**, 17, 19, 21, 23 | byte 3 (skipped) + byte 15 (skipped) | 0 |
+| Film=2 | rec[1] | 1, 3, 5, 7, 9, 11, 13, 15, 17, 19 | *(none)* | 22 |
+| Film=3 | rec[1]+rec[2] | 41, 43, 1, 3, 5, **—**, 9, 11, 13, 15 | rec[2][7] (skipped) | 42 |
+| Film=4 | rec[2]+rec[3] | 37, 39, 41, 43, 1, 3, 5, 7, 9, 11 | *(none)* | 62 |
+| Film=5 | rec[3]+rec[4] | 33, 35, 37, 39, 41, 43, 1, 3, 5, 7 | *(none)* | 82 |
+| Film=6 | rec[4]+rec[5] | 29, 31, 33, 35, 37, 39, 41, 43, 1, 3 | *(none)* | 102 |
+| Film=7 | rec[5] | 25, 27, 29, 31, 33, 35, 37, 39, 41, 43 | *(none)* | 122 |
+| Film=8 | rec[6] | 21, 23, 25, 27, 29, 31, 33, 35, 37, 39 | *(none)* | 142 |
+| Film=9 | rec[7] | 17, 19, 21, 23, 25, 27, 29, 31, 33, 35 | *(none)* | 162 |
+| Film=10 | rec[8] | 13, 15, 17, 19, 21, 23, 25, 27, 29, 31 | *(none)* | 182 |
+
+> **Double Exposure behavior:** Film=1 (byte 3) and Film=3 (rec[2][7]) each have one byte
+> allocated to the Double Exposure lens effect. DE is a **two-press cycle**: the first press
+> takes the first exposure but writes nothing to HIST; the second press completes the cycle and
+> increments the counter by 1. Confirmed live 2026-05-19 (Film=3/DE: rec[2][7] incremented
+> after second press; first press left no HIST trace). Film=1 has an additional unused byte at
+> position 3 in rec[0] for the same reason. Film=1 also has an unrelated second skip at byte 15
+> (cause unconfirmed; possibly firmware reservation).
+
+---
+
+#### Complete 10×10 position grid
+
+Each cell shows `rR·bB` = HIST address: record row R, byte B within that row.  
+† = Double Exposure slot: counter increments once per **completed two-press cycle**; single press leaves no HIST trace.
+
+| Film | Lens #01 | Lens #02 | Lens #03 | Lens #04 | Lens #05 | Lens #06 | Lens #07 | Lens #08 | Lens #09 | Lens #10 |
+|------|----------|----------|----------|----------|----------|----------|----------|----------|----------|----------|
+| **F1** | r0·b1 | r0·b5 | r0·b7 | r0·b9 | r0·b11 | r0·b13 | r0·b17 | r0·b19 | r0·b21 | r0·b23 |
+| **F2** | r1·b1 | r1·b3 | r1·b5 | r1·b7 | r1·b9 | r1·b11 | r1·b13 | r1·b15 | r1·b17 | r1·b19 |
+| **F3** | r1·b41 | r1·b43 | r2·b1 | r2·b3 | r2·b5 | r2·b7† | r2·b9 | r2·b11 | r2·b13 | r2·b15 |
+| **F4** | r2·b37 | r2·b39 | r2·b41 | r2·b43 | r3·b1 | r3·b3 | r3·b5 | r3·b7 | r3·b9 | r3·b11 |
+| **F5** | r3·b33 | r3·b35 | r3·b37 | r3·b39 | r3·b41 | r3·b43 | r4·b1 | r4·b3 | r4·b5 | r4·b7 |
+| **F6** | r4·b29 | r4·b31 | r4·b33 | r4·b35 | r4·b37 | r4·b39 | r4·b41 | r4·b43 | r5·b1 | r5·b3 |
+| **F7** | r5·b25 | r5·b27 | r5·b29 | r5·b31 | r5·b33 | r5·b35 | r5·b37 | r5·b39 | r5·b41 | r5·b43 |
+| **F8** | r6·b21 | r6·b23 | r6·b25 | r6·b27 | r6·b29 | r6·b31 | r6·b33 | r6·b35 | r6·b37 | r6·b39 |
+| **F9** | r7·b17 | r7·b19 | r7·b21 | r7·b23 | r7·b25 | r7·b27 | r7·b29 | r7·b31 | r7·b33 | r7·b35 |
+| **F10** | r8·b13 | r8·b15 | r8·b17 | r8·b19 | r8·b21 | r8·b23 | r8·b25 | r8·b27 | r8·b29 | r8·b31 |
+
+The diagonal banding is clear: each row shifts 4 bytes left within the record and 2 bytes further
+into the next record, producing a consistent staircase across the 37×44 grid.
+
+---
+
+#### Deviations from normal pattern — Film=1 and Film=3
+
+The **normal pattern** (Films 2, 4–10): each lens #K occupies byte `start_byte + 2(K−1)` within
+its leading record, wrapping to the next record after 22 positions. No gaps between consecutive
+lens slots.
+
+**Film=1 deviations (two byte skips):**
+
+If Film=1 followed the normal rule it would use consecutive odd bytes starting from byte 1 in
+rec[0] — identical to Film=2's layout in rec[1]. The actual layout diverges at two points:
+
+| Lens # | "Normal" byte | Actual byte | Shift | Note |
+|--------|---------------|-------------|-------|------|
+| #01 | 1 | **1** | 0 | ✓ normal |
+| #02 | 3 | **5** | +2 | byte 3 skipped ← **DE slot** |
+| #03 | 5 | **7** | +2 | shifted |
+| #04 | 7 | **9** | +2 | shifted |
+| #05 | 9 | **11** | +2 | shifted |
+| #06 | 11 | **13** | +2 | shifted (this IS the DE effect) |
+| #07 | 13 | **17** | +4 | byte 15 also skipped ← **unknown skip** |
+| #08 | 15 | **19** | +4 | shifted |
+| #09 | 17 | **21** | +4 | shifted |
+| #10 | 19 | **23** | +4 | shifted |
+
+Two bytes in rec[0] are absent from the Film=1 allocation:
+- **Byte 3** — DE slot. Same two-press mechanic as Film=3's rec[2][7]: the Double Exposure
+  effect requires two sequential presses to complete one cycle; only the second press writes to
+  HIST. A single press leaves no counter trace.
+- **Byte 15** — cause unconfirmed. Possibly a second two-press effect, firmware padding, or
+  a historical artefact of Film=1 being a legacy mode. Unlike the DE skip (which appears in
+  both Film=1 and Film=3), this skip is unique to Film=1.
+
+The two skips shift lenses #02–#06 right by 2 bytes and lenses #07–#10 right by 4 bytes.
+
+**Film=3 deviations (one byte skip — DE only):**
+
+Film=3 follows the normal pattern exactly except for the DE slot at position #06:
+
+| Lens # | Expected position | Actual position | Note |
+|--------|-------------------|-----------------|------|
+| #01–#05 | r1·b41, r1·b43, r2·b1, r2·b3, r2·b5 | **same** | ✓ normal |
+| #06 | r2·b7 | **r2·b7†** | DE slot — fires once per completed two-press cycle (confirmed 2026-05-19) |
+| #07–#10 | r2·b9, r2·b11, r2·b13, r2·b15 | **same** | ✓ normal |
+
+Unlike Film=1, the DE skip in Film=3 does **not** shift subsequent lens positions. The slot is
+allocated within the 10-position block and the remaining lenses fall on their expected bytes.
+This suggests the firmware knows exactly where each slot should be regardless of whether it fires.
+
+---
+
+#### HIST summary — reading shot counts per film mode and lens effect
+
+> **HIST counters are session subtotals, not lifetime accumulators.**
+>
+> The camera zeroes the entire HIST buffer every time the phone sends
+> `op=(0x84,0x02) CAMERA_LOG_SUBTOTAL_CLEAR` — which the official Instax app
+> sends on **every BLE connect** as part of its standard handshake.
+>
+> The app accumulates running totals **on the phone side**: it reads the current
+> subtotals, adds them to its local database, then clears the camera buffer.
+>
+> **Practical consequence:** if your script omits `(84,02)`, the buffer keeps
+> accumulating across sessions. If you (or the official app) send `(84,02)`,
+> the buffer resets to zero; the next read reflects only shots since that clear.
+>
+> **Confirmed 2026-05-19:** at shot #151 all HIST counters were 0 at baseline;
+> after one shot with Film=1 + Lens=6 (Double Ex.) the buffer showed
+> `rec[0][1]=1` (total) and `rec[0][13]=1` (Film=1/Lens=6), proving the buffer
+> had been zeroed by the preceding app session.
+
+```python
+# ─── Effect name lookups ─────────────────────────────────────────────────────
+# Names confirmed from app “Usage History” screen (2026-05-19).
+# The 10 lens effect names are IDENTICAL across all 10 film modes.
+FILM_NAMES = {
+    1: "Normal",  2: "Vivid",   3: "Warm",       4: "Sky Blue",  5: "Light Green",
+    6: "Magenta", 7: "Sepia",   8: "Monochrome",  9: "Amber",    10: "Summer",
+}
+LENS_NAMES = {
+    1: "Normal",      2: "Light Leak",      3: "Light Prism",
+    4: "Vignette",    5: "Soft Glow",       6: "Double Ex.",
+    7: "Color Shift", 8: "Monochrome Blur", 9: "Color Gradient",
+    10: "Beam Flare",
+}
+
+# Film=1 uses a special byte layout (two reserved skips at bytes 3 and 15)
+_FILM1_BYTES = [1, 5, 7, 9, 11, 13, 17, 19, 21, 23]   # index 0 = lens #1
+
+# ─── Shot count lookup ────────────────────────────────────────────────────────
+def hist_shot_count(hist_body: bytes, film: int, lens: int) -> int:
+    """
+    Return the HIST shot count for a (film mode, lens effect) combination.
+
+    hist_body : the 1628-byte HIST body (strip the 8-byte “YYYYMMDD” date prefix
+                that precedes it in the slot-0 payload before passing in).
+    film      : 1–10  — film mode (see FILM_NAMES)
+    lens      : 1–10  — lens effect (see LENS_NAMES; same names for all film modes)
+
+    Film=1 has a non-consecutive byte layout (two firmware-reserved skips);
+    all other film modes follow: start_flat = 20×film − 18, flat = start_flat + (lens−1).
+
+    Film=3 lens #6 (Double Ex.) is at rec[2][7]. The counter increments once per
+    completed two-press DE cycle; a single press leaves no HIST trace. Confirmed 2026-05-19.
+    """
+    if film == 1:
+        return hist_body[_FILM1_BYTES[lens - 1]]        # all Film=1 counters in rec[0]
+    flat        = 20 * film - 18 + (lens - 1)
+    rec_num     = flat // 22
+    byte_in_rec = (flat % 22) * 2 + 1
+    return hist_body[rec_num * 44 + byte_in_rec]
+
+# ─── Aggregate helpers ──────────────────────────────────────────────────────────
+def hist_film_total(hist_body: bytes, film: int) -> int:
+    """Shots taken in a given film mode, summed across all 10 lens effects."""
+    return sum(hist_shot_count(hist_body, film, k) for k in range(1, 11))
+
+def hist_lens_total(hist_body: bytes, lens: int) -> int:
+    """Shots taken with a given lens effect, summed across all 10 film modes."""
+    return sum(hist_shot_count(hist_body, n, lens) for n in range(1, 11))
+
+# ─── Global counters ────────────────────────────────────────────────────────────
+# Global total shots — valid regardless of film/lens selection
+total_shots = hist_body[1]          # rec[0][1]; mirrors hist_body[36*44 + 21]
+
+# ─── Example: dump full usage table ────────────────────────────────────────────────
+print(f"Total shots: {total_shots}")
+for film in range(1, 11):
+    for lens in range(1, 11):
+        n = hist_shot_count(hist_body, film, lens)
+        if n:
+            print(f"{FILM_NAMES[film]:<15} + {LENS_NAMES[lens]:<20}  shots={n}")
+```
 
 #### Print record (234 bytes) — partial field layout
 
@@ -659,7 +1161,7 @@ Decoded keepalive values from 19-51-52 capture:
 - Shots remaining: `0x26 & 0x0F` = 6; shots_in_pack=12 (Wide Evo)
 - Digital photo transfers to phone: 4 (PRINT_HISTORY_INFO field 1 = 4); physical film ejections: 5 (field 2 = 5, `prints_made`)
 
-> **CAMERA_HISTORY_INFO byte[2] = live shot counter.** This byte increments by 1 each time a photo is taken, whether the camera is BLE-connected or not. The app detects each new shot by polling this value (758 polls observed in one 133-second session). **This is how the app tracks per-effect shot counts in real time:** when the counter increments, the app reads the current film effect (`reg 0x17`) and lens effect (`reg 0x1b`) to attribute the shot to the correct category. The cumulative per-effect breakdown shown in the Usage History screen (Normal=37, Vivid=2, etc.) is **maintained locally by the app** — NOT stored as fields directly readable from the camera.
+> **CAMERA_HISTORY_INFO byte[2] = live shot counter.** This byte increments by 1 each time a photo is taken, whether the camera is BLE-connected or not. With the new session init (`(80,10)` sent), shots taken while BLE-connected ARE written to the HIST buffer in real-time (confirmed 2026-05-19). **Counter (≠ app “Shots” total):** the counter tracks every shot including connected shots not read via `HIST_GET_DATA`; the app’s display comes from HIST record counts. When the counter increments, the app reads `reg 0x17` (Film Effect) and `reg 0x1b` (Lens Effect) to attribute the shot to the correct per-effect category. The cumulative per-effect breakdown (Normal=37, Vivid=2, …) is **maintained locally by the app** using this real-time tracking.
 - CAMERA_FUNCTION_INFO byte[0]=0x02, byte[1]=0x32=50 (semantics TBD)
 - CAMERA_HISTORY_INFO byte[2]=0x17=23 (**live shot counter** — 23 shots taken at the time of this 19-51-52 capture)
 

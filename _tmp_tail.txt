@@ -1,0 +1,700 @@
+﻿---
+
+## End-to-End Print Pipeline (confirmed working â€” Gen 1 Mini Evo)
+
+The following sequence was reverse-engineered from official app BLE captures and
+validated by a successful physical print (film ejected, image visible). All packets
+use the [Link protocol framing](#link-protocol-ios-profile--all-models).
+
+### Step 1 â€” Connect and identify
+
+```
+Enable CCCD on notify char (70954784-...)
+op=(0x00,0x00)  []                    SUPPORT_FUNCTION_AND_VERSION_INFO (hello)
+op=(0x00,0x01)  [0x00]                IMAGE_SUPPORT_INFO â†’ (width, height)
+op=(0x00,0x01)  [0x01]                â†’ "FUJIFILM"
+op=(0x00,0x01)  [0x02]                â†’ model ID ("FI019")
+op=(0x00,0x01)  [0x03]                â†’ serial number
+op=(0x00,0x02)  [0x01]                BATTERY_INFO      â†’ (state, pct)
+op=(0x00,0x02)  [0x02]                PRINTER_FUNCTION_INFO â†’ photos_left
+```
+
+### Step 2 â€” Send image data
+
+```
+op=(0x10,0x00)  [img_size: 4B BE]     PRINT_IMAGE_DOWNLOAD_START
+    â†’ camera ACKs with (0x10,0x00) response
+
+for each chunk (0-based sequence number, 900 bytes each, last zero-padded):
+    op=(0x10,0x01)  [seq: 4B BE] [900 bytes]  PRINT_IMAGE_DOWNLOAD_DATA
+    â†’ camera ACKs with (0x10,0x01) [seq: 4B BE]
+
+op=(0x10,0x02)  []                    PRINT_IMAGE_DOWNLOAD_END
+    â†’ camera ACKs with (0x10,0x02)
+```
+
+- Image size = exact JPEG byte count (no header/prefix)
+- Chunks are always 904 bytes in payload: 4-byte sequence + 900 bytes of data
+- Last chunk is zero-padded to 900 bytes
+- Each chunk is ACKed before the next is sent (no pipelining)
+- Seq 0 = first chunk; `ceil(img_size / 900)` chunks total
+
+### Step 3 â€” Trigger print
+
+```
+op=(0x10,0x80)  []                    PRINT_IMAGE  â† film ejects here
+    â†’ camera responds: (0x10,0x80) payload=[0x00, 0x0C]
+    0x0C = 12 â†’ confirmed "print initiated" status code
+```
+
+### Step 4 â€” Post-print status check
+
+```
+op=(0x00,0x02)  [0x02]                PRINTER_FUNCTION_INFO â†’ photos_left (now decremented)
+```
+
+### Confirmed packet sizes
+
+| Step | Payload | Total packet |
+|---|---|---|
+| DOWNLOAD_START | 4 bytes | 11 B |
+| DOWNLOAD_DATA chunk | 904 bytes | 911 B (BLE-fragmented across writes) |
+| DOWNLOAD_END | 0 bytes | 7 B |
+| PRINT_IMAGE | 0 bytes | 7 B |
+
+### Key ACK packet examples (actual bytes on wire)
+
+```
+DOWNLOAD_START ack:   61 42 00 08 10 00 00 [cs]      (8 bytes)
+DOWNLOAD_DATA  ack:   61 42 00 0B 10 01 [seq 4B] [cs] (11 bytes)
+DOWNLOAD_END   ack:   61 42 00 08 10 02 00 [cs]      (8 bytes)
+PRINT_IMAGE    ack:   61 42 00 09 10 80 00 0C [cs]   (9 bytes)
+```
+
+---
+
+## Image Preparation (client-side)
+
+The Instax Mini Evo does **not** apply any image processing filters on-device.
+All effects are applied on the phone (or in our Python tool) before transmission.
+
+### Required image format
+
+| Property | Value |
+|---|---|
+| Width Ã— Height | **600 Ã— 800 px** (portrait) |
+| Color mode | RGB |
+| File format | JPEG |
+| Target size | **94.5 â€“ 105 KB** (binary-search quality) |
+| Max quality | 95 (prevents quality=100 inflated files) |
+
+The 600Ã—800 dimensions are returned by `IMAGE_SUPPORT_INFO` (`op=(0x00,0x01)` InfoType=0x00).
+The size ceiling (105 KB) was determined empirically to fit camera buffer constraints.
+
+### Resize behaviour
+
+Input images are scaled to fit 600Ã—800 with `LANCZOS` resampling, then center-cropped
+(or letterboxed by PIL's `thumbnail` default). Portrait images fill the frame; landscape
+images are letterboxed top/bottom.
+
+### Image modes ("filters")
+
+These are **client-side PIL operations** applied before JPEG encode; the camera
+receives only the processed pixel data.
+
+| Mode | Implementation | Effect |
+|---|---|---|
+| **Normal** | No change | Native colours |
+| **Rich** | `ImageEnhance.Color(img).enhance(1.5)` | Saturation Ã—1.5 â€” vivid, punchy colours |
+
+> The "Rich" name matches the Instax app's filter name. Other official app filters
+> (Fade, Mono, Sepia, etc.) can be approximated with standard PIL operations.
+> None of these require any additional BLE command â€” the camera is always in "raw
+> receive" mode for image data.
+
+---
+
+## Known Gaps â€” Commands Not Yet Identified
+
+### Print history / transferred-images gallery
+
+**Status: Resolved â€” no missing BLE command.**
+
+The camera automatically registers every ejected print in its internal history
+(up to 50 entries, stored in camera flash) regardless of which BLE client triggered
+the print. Confirmed 2026-05-17: prints sent via our tool are visible in the
+on-camera print history without any additional commands.
+
+The Instax app's "TRANSFERRED IMAGES" gallery is populated by a separate user-initiated
+flow: the user selects "PRINTED IMAGE TRANSFER" from the camera's physical menu, which
+causes the camera to push the stored JPEG back over BLE to the app. That read-back
+transfer is not part of the print pipeline.
+
+---
+
+## Local Print Log
+
+Every `evo-print` run appends a record to `captures/print-log.jsonl`:
+
+```json
+{
+  "t": 1747397000.0,
+  "image": "F:\\path\\to\\image.jpg",
+  "camera": "FA:AB:BC:11:6F:D2",
+  "model": "FI019",
+  "transferred": true,
+  "printed": false,
+  "photos_left_after": 1
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `t` | Unix timestamp of the operation |
+| `image` | Absolute path to the source image file |
+| `camera` | BLE address of the camera (IOS profile) |
+| `model` | Model ID from `DEVICE_INFO_SERVICE` (e.g. `"FI019"`) |
+| `transferred` | `true` if image data was fully sent to camera |
+| `printed` | `true` if `PRINT_IMAGE` (0x10,0x80) was also sent (film ejected) |
+| `photos_left_after` | `photos_left` value from post-print status poll |
+
+`transferred=true, printed=false` means `--enable-print` was not passed â€” image was
+sent but film was not ejected (safe test mode).
+
+---
+
+## Feature Roadmap
+
+### 1. Live View (0x82 pull protocol) â€” CONFIRMED
+
+**Status: Fully working on both Mini Evo (FI019) and Wide Evo (FI028). 2026-05-17.**
+
+The `0x82` command group is **live view** â€” each `0x82,0x01` pull returns a **fresh, complete
+JPEG of whatever the camera lens currently sees**. It is a real-time viewfinder stream used
+for remote framing / remote shutter. It is **not** stored-print image transfer.
+
+**Confirmed from btsnoop session 144 (Wide Evo):** 176 unique JPEG frames delivered in
+8.57 s â‰ˆ **20 fps**. Each frame is **160Ã—106 px** (â‰ˆ1 KB). Frames differ in content
+(159 of 176 are unique), confirming a live feed and not a repeated still.
+
+**Each `0x82,0x01` response payload format:**
+```
+[2B chunk_idx = 0x0001][3B frame header][JPEG bytes starting FFD8FFâ€¦]
+```
+The 3B frame header before SOI is not yet fully decoded. Strip 5 bytes (2B idx + 3B header)
+to reach the raw JPEG. `chunk_idx` is always 1 â€” each pull is a self-contained single-chunk frame.
+
+**Confirmed command flow:**
+
+```
+# â”€â”€ Prepare + start â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Phone â†’ cam:  op=(0x80,0x15)  payload=17Ã—0x00             # LIVE_VIEW_PREPARE
+cam â†’ phone:  op=(0x80,0x15)  payload=17B                 # ACK (Mini Evo: [0xBF]; Wide Evo: 17B with byte[8]=0x32)
+Phone â†’ cam:  op=(0x82,0x00)  payload=[1B slot_index]     # LIVE_VIEW_START
+cam â†’ phone:  op=(0x82,0x00)  payload=[1B slot_index]     # ACK
+
+# â”€â”€ Pull loop (repeat for each frame, ~20 fps on Wide Evo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Phone â†’ cam:  op=(0x82,0x01)  payload=<empty>             # pull request
+cam â†’ phone:  op=(0x82,0x01)  payload=[2B chunk_idx=0x0001][3B hdr][JPEGâ€¦]
+  # Mini Evo: pull 1 = 1B readiness signal (0x02); pull 2 = full JPEG burst
+  # Wide Evo: pull 1 = full JPEG burst (no readiness preamble)
+
+# â”€â”€ End â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Phone â†’ cam:  op=(0x82,0x02)  payload=[1B slot_index]     # LIVE_VIEW_END
+cam â†’ phone:  op=(0x82,0x02)  payload=[0x00]              # ACK
+```
+
+Note: `CAMERA_LOG_SLOT_ACK` (`0x84,0x0b`) is **not required** before `0x82` (confirmed
+2026-06-17 â€” see Â§2). The 0x84 sequence runs independently before the 0x82 live-view loop.
+
+**Observed JPEG sizes:**
+
+| Camera | Resolution | JPEG size | Pulls needed | Source |
+|---|---|---|---|---|
+| Mini Evo (FI019) | ~120Ã—160 px (portrait) | ~2.7 KB | 2 | Live capture |
+| Wide Evo (FI028) | **160Ã—106 px** (landscape) | **~1.0 KB** | 1â€“3 | btsnoop session 144 âœ“ |
+
+**Slot index semantics:** Unknown. Both cameras respond to indices 0 and 1. The slot
+index does not select a stored image â€” it selects a viewfinder buffer slot.
+
+---
+
+### 2. Camera Print Log Download â€” CONFIRMED
+
+**Status: Protocol fully decoded 2026-05-17 from HCI capture session 144.**
+
+The `0x84` command group downloads the cameraâ€™s **date-indexed print log** â€” a record
+of when prints were made and how many, by date. This is **not** visual thumbnail data.
+
+**Context:** The app runs this sequence immediately after connecting (before 0x82). It
+is triggered when the user presses the cameraâ€™s share button.
+
+**Confirmed command flow:**
+
+```
+# â”€â”€ Open a log session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Phone â†’ cam:  op=(0x84,0x00)  payload=<empty>             # CAMERA_LOG_SUBTOTAL_START
+cam â†’ phone:  op=(0x84,0x00)  payload=[13B]              # summary (slot count etc.)
+
+Phone â†’ cam:  op=(0x84,0x01)  payload=[4B subtotal_data] # CAMERA_LOG_SUBTOTAL_DATA
+cam â†’ phone:  op=(0x84,0x01)  payload=[9B]              # cumulative totals
+
+Phone â†’ cam:  op=(0x84,0x02)  payload=<empty>             # CAMERA_LOG_SUBTOTAL_CLEAR
+cam â†’ phone:  op=(0x84,0x02)  payload=[1B 0x00]          # ACK  (marks log for deletion)
+
+# â”€â”€ Download one log slot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Phone â†’ cam:  op=(0x84,0x09)  payload=[1B slot_id]        # CAMERA_LOG_SLOT_QUERY
+cam â†’ phone:  op=(0x84,0x09)  payload=[2B slot_id][4B data_size][4B data_size][4B record_count]
+              # slot_id: 0 = print date log; 2 = filter/usage log. All-zeros if log cleared.
+              # data_size: total bytes of log blob (e.g. 4908 for 3 records Ã— 1636B each)
+
+Phone â†’ cam:  op=(0x84,0x0a)  payload=[1B slot_id][4Ã—0x00]  # CAMERA_LOG_SLOT_DATA request
+cam â†’ phone:  op=(0x84,0x0a)  payload=[data_size B]      # camera immediately pushes log blob
+              # delivered as fragmented IOS Link packet over multiple ATT notifications
+              # blob format: [6B header][N Ã— RECORD]
+              # SLOT 0 (print count log) record layout (record_size=1636B):
+              #   [6B zeros][8B date ASCII â€œYYYYMMDDâ€]
+              #   [uint8 0x00][uint8 print_count][3B zeros][uint8 print_count_repeat]
+              #   after_date[1] = after_date[5] = print count for that date
+              # SLOT 2 (filter/usage log) record layout (record_size=1646B):
+              #   [6B zeros][8B date ASCII â€œYYYYMMDDâ€]
+              #   [2B zeros][uint8 field_3]...[uint8 field_7][uint8 field_9]...[uint8 field_15]
+              #   all non-zero fields = 1 for a single print (per-field meaning TBD)
+              # record_size matches data_size / record_count
+
+Phone â†’ cam:  op=(0x84,0x0b)  payload=[1B slot_id]        # CAMERA_LOG_SLOT_ACK
+cam â†’ phone:  op=(0x84,0x0b)  payload=[0x00][1B slot_id]  # ACK
+
+# Repeat SLOT_QUERY / SLOT_DATA / SLOT_ACK for other slot_ids (e.g. 0 and 2)
+```
+
+**Observed values (Wide Evo, session 144, HCI capture 19-51-52, 2026-05-17 + live camera 2026-06-17):**
+- Slot 0 (print date log): record_size=1636B
+  - Fields: `after_date[1]` = `after_date[5]` = print count for that date
+  - Session 144 (3 records): date=`20260324` count=1 / date=`20260124` count=19 / date=`20250416` count=1
+  - Live camera (1 record):  date=`20260617` count=1 âœ“
+- Slot 2 (filter/usage log): record_size=1646B
+  - `after_date` positions [3, 7, 9, 11, 13, 15] are all 1 for a single-print day (exact per-field meaning TBD)
+  - Live camera (1 record):  date=`20260617`, all 6 positions = 1 (1 print, no filter data decoded yet)
+- After `CAMERA_LOG_SUBTOTAL_CLEAR` + both ACKs: subsequent `0x84,0x09` queries return all-zeros
+  (log is **destructively read** â€” cleared once the phone ACKs; camera on-screen history unaffected)
+
+**Empty-slot quirk (camera firmware):** When a slot has no pending data,
+`CAMERA_LOG_SLOT_DATA` delivers a 12-byte ATT notification even though `total_len`
+claims 13 -- the trailing checksum byte is absent. Receive code should accept a
+packet that is exactly 1 byte short after a 0.5 s grace wait (confirmed Wide Evo, 2026-06-17).
+
+**`CAMERA_LOG_SLOT_ACK` not required before `0x82` (confirmed 2026-06-17):**
+Omitting `0x84,0x0b` after downloading a slot does not prevent `0x80,0x15 PREPARE`
+or `0x82,0x00 LIVE_VIEW_START` from succeeding. Skipping the ACK (and the prior
+`CAMERA_LOG_SUBTOTAL_CLEAR`) preserves the log for re-reading on the next BLE session.
+
+**Important:** The Instax appâ€™s â€œHistoryâ€ display is this metadata (dates + counts),
+not image thumbnails. Visual print images are NOT transmitted over BLE.
+
+---
+
+### 3. Remote Shutter
+
+**Goal:** Trigger the camera's shutter remotely over BLE.
+
+Now that 0x82 is confirmed as live view, the remote shutter is the next thing to
+reverse-engineer. Candidates:
+- `CAMERA_SETTINGS` (op1=0x80, op2=0x00) â€” write a "capture" setting
+- `CAMERA_SETTINGS_GET` (0x80,0x01) â€” poll for shutter-ready state
+- An undiscovered opcode (capture a BLE session during app remote-shutter use)
+
+**What we need:** Capture an HCI log while using the Instax app's remote-shutter
+feature and look for the trigger opcode.
+
+---
+
+## Hypotheses & Open Questions
+
+This section tracks theories and ideas that are plausible but not yet confirmed.
+
+### H1 â€” Why Mini Evo (Gen 1) does not respond to `(88,00)`
+
+**Observed:** Connected to Mini Evo (FA:AB:BC:11:6F:D2), MTU=247, subscribed OK. Sent
+`(88,00)` â€” camera sent nothing back in 20 s.
+
+**Theory A (most likely):** The image_receive.py script never polled `CAMERA_FUNCTION_INFO`
+first. The camera may require seeing the polling loop (simulating the real app's keepalive)
+before it recognises the session as legitimate. Sending `(88,00)` cold, without the
+normal session handshake, may be silently rejected.
+â†’ *Test: add `(00,00)` hello + `(00,02)` InfoType=0x04 polling loop before `(88,00)`.*
+
+**Theory B:** Gen 1 (FI019) and Gen 2 (FI028) have different opcodes for image transfer.
+Gen 2 uses `0x88`; Gen 1 may use `0x86` or another family that was not in the
+available btsnoop captures.
+â†’ *Test: capture an HCI log of the Instax app doing an image transfer from the Mini Evo.*
+
+**Theory C:** The transfer-ready flag is in a different InfoType on Gen 1. The flag
+being in `CAMERA_FUNCTION_INFO` (InfoType=0x04) is confirmed only for Gen 2. Gen 1 may
+put it in `PRINTER_FUNCTION_INFO` (InfoType=0x02) or another byte.
+â†’ *Test: run listen_passive.py + poll all (00,02) InfoTypes while pressing Share; compare
+payload snapshots.*
+
+**Theory D:** Mini Evo firmware update (2026) changed the pairing/bonding flow and
+may also have changed or added the 0x88 protocol. The btsnoop we have is from an older
+firmware session â€” Gen 1 may have added 0x88 in the same update.
+
+### H2 â€” Meaning of `CAMERA_FUNCTION_INFO` byte[0] and byte[1]
+
+Normal Wide Evo value (new_capture): `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`
+Keepalive value (19-51-52 capture, different state): `02 32 00 00 00 00 00 00 00 00 00 00 00 00 00 00`
+
+- **byte[1] = 0x32 = 50**: appears in `LIVE_VIEW_PREPARE` response byte[8] on Wide Evo. Could
+  be a capability register, print count, or mode identifier. Matches the decimal value 50
+  (total prints taken per `CAMERA_HISTORY_INFO`? But that field is 0x17=23). Unknown.
+- **byte[0] = 0x02 vs 0x03**: may encode a camera mode or state machine state
+  (idle=0x02, live-view-active=0x03?).
+- **byte[10] = 0x04, byte[11] = 0x01**: stable across samples. Likely a capability flags field.
+
+### H3 â€” Correct polling loop before `(88,00)` (Gen 1)
+
+The btsnoop shows the Wide Evo app sends a full session handshake before polling begins:
+`(00,00)` hello â†’ device info queries â†’ `(00,02)` InfoType=0x04/05/02/03/01 rotation.
+Our current scripts skip the handshake and go straight to `(88,00)`. Gen 1 may require
+the handshake to initialise internal session state before 0x88 commands are accepted.
+â†’ *Test: run the full handshake (`(00,00)` + device info + keepalive rotation) for ~5 s,
+then press Share on camera, detect flag, fire `(88,00)`.*
+
+### H4 â€” `(88,02)` chunk ACK vs data: two frames or one?
+
+From the btsnoop we see two `(88,02)` camâ†’phone responses for each phoneâ†’cam request:
+first a 4B ACK (`[00 00 00 00]`), then the large data frame. However, both have the same
+op code. It is possible that:
+- **Theory A**: these are always two separate IOS Link frames
+- **Theory B**: the 4B "ACK" is actually the 5-byte header of a single large frame that
+  arrives fragmented across two ATT notifications (4B + remaining)
+The `recv_frame()` implementation in `image_receive.py` treats them as separate calls â€”
+if they are actually one frame the code will misparse. Needs live capture to verify.
+
+### H5 â€” Metadata byte[29] = 0x32
+
+`0x88,0x01` metadata byte[29] = 0x32 = 50. Also appears in `CAMERA_FUNCTION_INFO` data[1]
+and in `LIVE_VIEW_PREPARE` response byte[8] on Wide Evo. Possible meanings:
+- Total digital transfers made by this camera (lifetime counter)
+- A capability/mode register value that is coincidentally the same
+- Camera print count (but `CAMERA_HISTORY_INFO` shows 0x17=23, not 50)
+
+---
+
+## References
+
+- [javl/InstaxBLE](https://github.com/javl/InstaxBLE) â€” Python library for Instax Link printers (Mini/Square/Wide Link) via IOS BLE profile. Protocol is structurally identical to what Evo Wide uses.
+- [javl/InstaxBLE `Types.py`](https://github.com/javl/InstaxBLE/blob/main/Types.py) â€” EventType and InfoType enumerations
+- [javl/InstaxBLE issue #4](https://github.com/javl/InstaxBLE/issues/4#issuecomment-1484123671) â€” Android bugreport HCI capture guide
+- [jpwsutton/instax_api](https://github.com/jpwsutton/instax_api) â€” older WiFi-based Instax protocol
+
+---
+
+## Appendix: First-pass Android capture notes (17-34-32, now superseded)
+
+Method:
+
+- Parsed btsnoop records directly (HCI ACL -> L2CAP CID 0x0004 ATT only)
+- Direction labels follow btsnoop flag bit 0 decoding
+- Handle numbers are ATT handles (UUID mapping still pending from live `inspect`)
+
+## Device identity
+
+- Device:
+- BLE name:
+- Address / Windows device ID:
+- Advertised service UUIDs:
+- Manufacturer data:
+- Requires pairing/bonding:
+
+## GATT services
+
+| Service UUID | Purpose | Notes |
+|---|---|---|
+
+## Characteristics
+
+| UUID | Properties | Direction | Suspected purpose |
+|---|---|---|---|
+
+## Capture summary (2026-05-16 bugreport)
+
+- Main ATT log (`...btsnoop_hci.log.last.log`): 1,253 ATT packets
+- Direction counts: 641 device_to_host, 612 host_to_device
+- Dominant opcodes:
+  - Handle Value Notification: 491
+  - Write Command: 462
+  - Read Request: 57
+  - Read Response: 54
+  - Read By Type Request: 44
+  - Error Response: 35
+- Most active ATT handles:
+  - 0x0020 (407 events)
+  - 0x001D (365 events)
+  - 0x0027 (126 events)
+  - 0x002A (56 events)
+
+Likely high-traffic data paths are between handles `0x0020`/`0x002A` and notification handles `0x001D`/`0x0027`.
+
+## Observed session flow
+
+1. Connect
+2. ATT MTU exchange (`Exchange MTU Request/Response`)
+3. GATT discovery phase:
+   - `Read By Group Type Request/Response`
+   - `Read By Type Request/Response`
+   - `Find Information Request/Response`
+4. Setup writes (`Write Request` with matching `Write Response`)
+5. Bulk transfer phase:
+   - Heavy `Write Command` traffic to handles `0x0020` and `0x002A`
+   - Frequent `Handle Value Notification` from `0x001D` and `0x0027`
+6. Occasional `Read Request/Response` checks (likely status/config)
+7. Bursty session pattern with idle gaps between activity windows
+
+First burst excerpt (relative capture time):
+
+- `t=2.664s` MTU exchange begins
+- `t=2.905s - 3.235s` discovery + setup writes
+- `t=3.239s` write-command stream starts (`0x002A`, `0x0020`)
+- `t=3.297s` first high-rate notifications (`0x0027`, then `0x001D`)
+
+Detected burst windows (split on >20s idle gap, first ten):
+
+- 2.66s-36.08s (345 ATT packets)
+- 56.25s-81.26s (99 ATT packets)
+- 105.19s-106.28s (2 ATT packets)
+- 130.30s-131.21s (2 ATT packets)
+- 155.38s-156.23s (2 ATT packets)
+- 180.27s-181.25s (2 ATT packets)
+- 205.52s-206.23s (2 ATT packets)
+- 230.27s-231.43s (2 ATT packets)
+- 255.56s-260.73s (22 ATT packets)
+- 281.38s-285.70s (2 ATT packets)
+
+## Working hypotheses
+
+- `0x0020` and `0x002A` are likely host-write channels for payload/control chunks.
+- `0x001D` and `0x0027` are likely device notification channels for ack/status/data fragments.
+- The burst pattern is consistent with repeated mini-jobs (possibly segmented transfer, spool, or status polling loops).
+- `Handle Value Indication` and `Handle Value Confirmation` are rare and likely used for control-state boundaries.
+
+## Handle-to-UUID mapping (extracted from GATT discovery packets)
+
+Standard GATT services identified:
+
+- **0x1801**: Generic Attribute (GATT)
+- **0x1800**: Generic Access (GAP)
+- **0x180A**: Device Information
+- **0x1849**: Custom vendor service (primary traffic)
+- **0x184C**: Custom vendor service (secondary)
+- **0x5511be183c4754781fc24b4b5dcdaf62**: Custom 128-bit vendor UUID
+
+Active handles in main session (from earlier analysis):
+
+| Handle | Service UUID | Notes |
+|--------|------|-------|
+| 0x001D | 0x1849 | High-freq device notifications (365 events) |
+| 0x0020 | 0x1849 | High-freq host writes (407 events) |
+| 0x0027 | 0x1849 | Moderate-freq device notifications (126 events) |
+| 0x002A | 0x1849 | Host write channel (56 events) |
+| 0x000D | 0x1800 | GAP characteristic (setup writes early session) |
+| 0x0013 | 0x180A | Device Info characteristic |
+| 0x001E | 0x1800 | GAP write target |
+| 0x0016 | 0x180A | Device Info read source |
+| 0x0028 | 0x1849 | Low-activity custom handle |
+| 0x0003 | 0x1800 | GAP indication target (rare) |
+
+## Multi-capture session analysis
+
+Multiple Android bugreport captures (May 16, 2026):
+- **17-34-32** (first session): Full lifecycle with image send (~1254s total) âœ“ Confirmed successful print
+- **17-43-18** (intermediate): Partial session data
+- **17-52-45** (third session): Keep-alive phase after connect/disconnect (125s)
+
+### Evidence of successful transmission
+
+The image sent via BLE in session 17-34-32 was successfully printed on thermal media. Observed device output shows:
+- Thermal printer produced physical receipt/photo output
+- Battery level indicator: device displays 3 "pips" for full battery in UI status notifications
+- Image data integrity verified by successful physical output
+
+### Session phases observed
+
+**Phase 1: Connection & GATT Discovery (0-10s)**
+- Device advertises with service UUID 70954782-2d83-...
+- Client initiates connection and MTU exchange
+- GATT database discovery packets on handles 0x0001-0x0060
+- Status notifications begin on 0x001D with "02 01" / "02 02" patterns (image count field)
+
+**Phase 2: Image Data Transmission (3-7s in session 1)**
+- Bulk write commands to handle 0x0020 (Write Command channel)  
+- Corresponding notifications from device on 0x001D (status updates)
+- Status packets show transitions in image count tracking
+- Payload patterns suggest chunked image transfer (max ~100-200 bytes/packet)
+
+**Phase 3: Completion & Status Polling (7-1254s)**
+- Device sends status notifications every ~25 seconds on 0x001D
+- Keep-alive ping pattern: small status packets (4-8 bytes) alternating between different handles
+- Structure: `1B 00 4C`, `1B 00 4D`, `1B 00 4E` (incrementing counter)
+- Final keep-alive at 1254s before disconnect
+
+### Decoded notify packet types
+
+All notify packets arrive on handles **0x001D** and **0x0027** (mirrored â€” same data on both channels). Decoded from live HCI analysis:
+
+#### Type A: 5-byte Status Message â€” `[type] [subtype] [value] [b3] [b4]`
+
+| Subtype | Payload example | Meaning |
+|---------|-----------------|---------|
+| `01` | `16 01 00 03 44` | **Init/battery**: `b3 = battery level (0-3 pips)`. Confirmed: `03` = full (3 pips) |
+| `02` | `16 02 01 02 02` | **Image count**: `b2 = images currently queued`. Observed: `01` = 1 image loaded |
+
+- `type` byte: `0x16` = msg on 0x0027, `0x17` = mirror on 0x001D
+- Battery field is **byte [3]** of 5-byte packets with subtype `01`
+- Image count field is **byte [2]** of 5-byte packets with subtype `02`
+
+**Concrete example at T=0.870s (session 17:34:32):**
+```
+16 01 00 03 44
+^  ^  ^  ^  ^
+|  |  |  |  +-- checksum / footer
+|  |  |  +---- battery = 0x03 = 3 pips (full)
+|  |  +------- reserved
+|  +----------- subtype: 01 = init/battery message
++-------------- message type 0x16 (channel 0x0027)
+```
+
+**Concrete example at T=0.932s (session 17:34:32):**
+```
+16 02 01 02 02
+^  ^  ^  ^  ^
+|  |  |  +--+-- extra state bytes (02 02)
+|  |  +-------- image count = 0x01 = 1 image queued
+|  +----------- subtype: 02 = image count message
++-------------- message type 0x16
+```
+
+#### Type B: 3-byte Keep-Alive Ping â€” `[msg_id] [00] [seq]`
+
+```
+19 00 2E
+^  ^  ^
+|  |  +-- sequence number (increments per ping, ~25s interval)
+|  +----- constant 0x00 separator
++-------- message ID: 0x19 (ch 0x0027) / 0x1B (ch 0x001D)
+```
+
+- Channel 0x0027 pings: seq 0x00 â†’ 0x2F (every ~25s)
+- Channel 0x001D pings: seq 0x00 â†’ 0x2B (slightly offset, every ~25s)
+- Session 3 (17:52:45) continues from seq `0x56`, confirming global counter across connections
+
+#### Type C: 6-byte Device ID/Firmware â€” `[type] [sub] [4 bytes]`
+
+Example: `16 00 D6 B7 7B 1B` â€” appears once at session start, likely firmware version or device ID bytes.
+
+#### Type D: 13-byte Session Init â€” `[header] [6-byte device_id] [padding] [state]`
+
+Example: `00 06 8D 3D B0 E5 92 59 03 3D 00 00 01`
+- Bytes [2-7]: 6-byte device identifier (changes per device connection)
+- Last byte `01`: initial state flag
+
+### Status message format (Handle 0x001D notifications starting with 0xA8)
+
+```
+A8 [seq] 00 [type] [data...]
+   ^      ^  ^      ^
+   |      |  |      +-- Message type: 0x02 (status), 0x52 (completion)
+   |      |  +---------- Reserved
+   |      +------------- Sequence number (increments with each message)
+   +------------------- Message class (0xA8 = status notification)
+```
+
+**Status type 0x02 (During setup/transfer):**
+- Offset +4: `11 01 04 [device_id]` pattern
+- Offset +10: `02 XX` where XX appears related to device state or image count
+- Examples: `02 03`, `02 04`, `02 05` (possible status codes 3-5)
+
+**Status type 0x52 (Completion/Transition):**
+- Indicates phase transition or completion event
+- Followed by variable-length data payload (observed up to 100+ bytes)
+
+### Image count tracking â€” CONFIRMED
+
+The **5-byte subtype `02` packet** directly encodes image count at byte [2]:
+- `16 02 01 02 02` â†’ 1 image queued (initial state after first image was pre-loaded)
+- Count is confirmed as byte [2] (0-indexed) of 5-byte subtype-02 notify packets
+- Expect `02` at byte [2] when 2 images are loaded, `00` when queue is empty
+
+### Battery level â€” CONFIRMED
+
+The **5-byte subtype `01` packet** encodes battery at byte [3]:
+- `16 01 00 03 44` â†’ battery = 3 (full, confirmed by physical device display at test time)
+- Range: 0-3 pips â†’ values 0x00-0x03 at byte [3]
+
+### Next steps
+
+- Live test: connect, subscribe to 0x70954784 notify, read image count (expect 5-byte subtype 02 packet)
+- Capture a controlled single-image send to observe count decrement (N â†’ N-1)
+- Decode the variable-length payload format in 0x52 completion messages
+- Map payload structure in high-volume writes to 0x0020 (image data + metadata)
+
+## Packet log format
+
+```json
+{
+  "t": 1710000000.0,
+  "direction": "phone_to_camera",
+  "characteristic": "uuid",
+  "data": "hex"
+}
+```
+
+## Link-printer comparison
+
+**Reference: [javl/InstaxBLE](https://github.com/javl/InstaxBLE) - Instax Mini/Square/Wide Link protocol**
+
+### Similarities to javl/InstaxBLE (Mini Link):
+
+| Aspect | InstaxBLE (Mini Link) | Our Evo Protocol | Notes |
+|--------|---|---|---|
+| **Service UUID** | `70954782-2d83-473d-9e5f-81e1d02d5273` | `70954782-2d83-...` (partial match) | Service prefix matches! Suggests vendor assigned range |
+| **Write Characteristic** | `70954783-2d83-...` | Handle 0x0020 (0x1849 service) | Sequential UUIDs differ |
+| **Notify Characteristic** | `70954784-2d83-...` | Handle 0x001D, 0x0027 (multiple) | Evo uses multiple notify channels |
+| **Packet Header** | `41 62` ('Ab') | `1B` (opcode), then ATT payload | Different framing |
+| **Image Chunk Size** | 900 bytes | ~100-200 bytes (observed) | Evo uses smaller chunks |
+| **Status Messages** | EventType tuples (op1, op2) | `0xA8` prefix with sequence | Evo has custom status format |
+| **Checksum** | `(255 - sum) & 0xFF` | Not observed in ATT stream | May be handled at ATT level |
+| **Battery Level** | Query via EventType.SUPPORT_FUNCTION_INFO | Embedded in 0xA8 status messages | Evo broadcasts battery proactively |
+| **Photos Left** | Queries printer | Tracked via image count field | Evo tracks queue state |
+
+### Key Differences (Evo vs Link):
+
+1. **Protocol Layer**
+   - Link: Custom packet format over BLE writes/notifications
+   - Evo: Direct ATT characteristic values (L2CAP CID 0x0004 ATT payloads)
+
+2. **Service Architecture**
+   - Link: Single write + notify pair for bidirectional communication
+   - Evo: Asymmetric design with dedicated write (0x0020) and multiple notify channels (0x001D, 0x0027, 0x002A)
+
+3. **Status Model**
+   - Link: Request-response (query battery, photos, state)
+   - Evo: Proactive notifications with encoded status, battery, image count in single `0xA8` messages
+
+4. **Image Transfer**
+   - Link: Explicit start/data/end sequence with chunk counting
+   - Evo: Bulk write commands to 0x0020, status updates on 0x001D show progress
+
+### Hypothesis: Protocol Evolution
+Instax Evo may represent an evolution of the Link protocol:
+- **Shared heritage**: Service UUID prefix match strongly suggests common vendor codebase
+- **Simplified architecture**: Fewer orchestration packets, more direct data flow
+- **Efficiency**: Smaller MTU might drive smaller chunks; multiple notify channels may support parallel status/data streams
+- **Embedded intelligence**: Status broadcasting reduces request-response overhead (battery level already known without querying)
+
+### Further Investigation Needed
+
+- Decode `0xA8` status field correlation with Link's EventType structure
+- Determine if 0x1849 service is a private/proprietary extension of Evo
+- Capture a controlled Link printer session for direct protocol comparison
+- Validate image chunk format and sequencing mechanism

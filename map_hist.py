@@ -115,13 +115,41 @@ class HistReader:
         self._buf.clear()
 
     async def init_session(self):
-        """Send (00,00) SUPPORT_FUNCTION_AND_VERSION_INFO — must be first packet."""
+        """Full session init matching what the official Instax app sends.
+
+        Order confirmed from bugreport btsnoop 2026-05-18 21:39:
+          (00,00) SUPPORT_FUNCTION_AND_VERSION_INFO  — must be first
+          (20,10) unknown capability query            — new opcode; C→P = [00 00 00]
+          (80,10) unknown session register            — new opcode; C→P = [00 00 02 00 03 00 …]
+                  Without (80,10), the camera does NOT write HIST records for
+                  shots taken while BLE is connected.
+        """
         await self._exchange(0x00, 0x00)
+        await self._exchange(0x20, 0x10)                  # capability query
+        await self._exchange(0x80, 0x10, bytes([0x00]))   # session register — enables live HIST
+
+    async def poll_status(self) -> int | None:
+        """Run the full keepalive poll cycle matching the official app.
+
+        The official app polls sub=02,03,01,04,05 sequentially every ~500ms.
+        This is required for the camera to track BLE-connected shots in HIST.
+        Returns the shot counter value (sub=05 pay[5]), or None on error.
+        """
+        try:
+            for sub in (0x02, 0x03, 0x01, 0x04):
+                await self._exchange(0x00, 0x02, bytes([sub]))
+            _, _, pay = await self._exchange(0x00, 0x02, bytes([0x05]))
+            if len(pay) >= 6:
+                return pay[5]
+        except Exception:
+            pass
+        return None
 
     async def read_shot_counter(self) -> int | None:
         """CAMERA_HISTORY_INFO (00,02) InfoType=0x05 — last byte = cumulative shot count.
         Full 6-byte response: [0x00][0x05][0x00][0x00][0x00][counter]
-        Confirmed from track_status.py: '00 05 00 00 00 28' → counter at pay[5].
+        Confirmed from btsnoop 2026-05-18: '00 05 00 00 00 28' = counter 0x28=40 at pay[5].
+        Note: counter counts ALL shots (connected + disconnected); app 'Shots' shows HIST count only.
         """
         try:
             _, _, pay = await self._exchange(0x00, 0x02, bytes([0x05]))
@@ -338,6 +366,89 @@ def show_map(current_slots: dict, baseline: dict | None, counter: int | None,
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
+async def _live_session(reader: "HistReader", baseline: dict | None, last_counter: int) -> int:
+    """One connected live session — returns the last counter seen.
+
+    Called by run_live() inside a reconnect loop.  Raises on disconnect so
+    the caller can reconnect and resume.  Returns last_counter so the next
+    session can continue where this one left off.
+    """
+    while True:
+        # Full poll cycle matching official app: sub 02,03,01,04,05
+        new_counter = await reader.poll_status()
+        if new_counter is None:
+            await asyncio.sleep(0.3)
+            continue
+
+        if new_counter != last_counter:
+            delta = (new_counter - last_counter) & 0xFF
+            console.print(
+                f"[bold yellow]▶ Shot detected![/bold yellow]"
+                f"  counter {last_counter}→{new_counter}  (+{delta})"
+            )
+            last_counter = new_counter
+
+            # Read current effect registers right after the shot
+            new_film = await reader.read_register(0x17)
+            new_lens = await reader.read_register(0x1b)
+
+            # Wait 3 s — camera writes HIST asynchronously after shot
+            console.print("[dim]  Waiting 3 s for camera to write HIST…[/dim]")
+            await asyncio.sleep(3.0)
+
+            # Read HIST to see what changed
+            new_slots = await reader.read_hist()
+            show_map(new_slots, baseline, new_counter, new_film, new_lens)
+
+
+async def run_live(address: str):
+    """Stay connected; poll shot counter; read HIST on each new shot.
+
+    Auto-reconnects when the camera drops BLE (normal after film advance).
+    """
+    baseline     = load_baseline()
+    last_counter = None
+
+    while True:   # reconnect loop
+        reader = HistReader(address)
+        try:
+            console.print("[dim]Connecting …[/dim]")
+            await reader.connect()
+            await reader.init_session()
+
+            film_reg = await reader.read_register(0x17)
+            lens_reg = await reader.read_register(0x1b)
+            counter  = await reader.read_shot_counter()
+            slots    = await reader.read_hist()
+
+            show_map(slots, baseline, counter, film_reg, lens_reg)
+
+            # Save baseline on first connect
+            if baseline is None:
+                meta = {'counter': counter, 'film_reg': film_reg, 'lens_reg': lens_reg}
+                save_baseline(slots, meta)
+                baseline = load_baseline()
+
+            # Always sync to the just-read counter so reconnects don't re-fire old shots
+            last_counter = counter
+
+            console.print(
+                f"\n[bold cyan]Live mode — watching for shots…[/bold cyan]"
+                f"  counter={counter}  Film={film_reg}  Lens={lens_reg}"
+                f"\n[dim]Take a photo. Ctrl-C to stop.[/dim]\n"
+            )
+
+            await _live_session(reader, baseline, last_counter)
+
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            console.print(f"[yellow]  Connection lost ({type(e).__name__}). Reconnecting in 3 s…[/yellow]")
+            await asyncio.sleep(3.0)
+        finally:
+            await reader.disconnect()
+
+
 async def run(address: str):
     reader = HistReader(address)
     try:
@@ -377,6 +488,10 @@ def main():
         "--reset", action="store_true",
         help="Delete saved baseline and exit"
     )
+    parser.add_argument(
+        "--live", action="store_true",
+        help="Stay connected and auto-read HIST every time the shot counter increments"
+    )
     args = parser.parse_args()
 
     if args.reset:
@@ -385,6 +500,15 @@ def main():
             console.print(f"[green]Baseline deleted ({BASELINE_FILE.name}).[/green]")
         else:
             console.print("[dim]No baseline file to delete.[/dim]")
+        return
+
+    if args.live:
+        console.print(f"[bold]map_hist --live[/bold]  camera={args.address}")
+        console.print("Stays connected. Reads HIST automatically on each new shot.\n")
+        try:
+            asyncio.run(run_live(args.address))
+        except KeyboardInterrupt:
+            console.print("\n[bold]Stopped.[/bold]")
         return
 
     console.print(f"[bold]map_hist[/bold]  camera={args.address}")
