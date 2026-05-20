@@ -40,6 +40,29 @@ BASELINE_FILE   = Path(__file__).parent / "map_hist_baseline.json"
 
 console = Console()
 
+FILM_LENS_POS: dict[int, dict[int, tuple[int, int]]] = {
+    1:  {1: (0, 5), 2: (0, 7), 3: (0, 9), 4: (0, 11), 5: (0, 13),
+        6: (0, 3), 7: (0, 17), 8: (0, 19), 9: (0, 21), 10: (0, 23)},
+    2:  {1: (1, 1), 2: (1, 3), 3: (1, 5), 4: (1, 7), 5: (1, 9),
+        6: (1, 11), 7: (1, 13), 8: (1, 15), 9: (1, 17), 10: (1, 19)},
+    3:  {1: (1, 41), 2: (1, 43), 3: (2, 1), 4: (2, 3), 5: (2, 5),
+        6: (2, 7), 7: (2, 9), 8: (2, 11), 9: (2, 13), 10: (2, 15)},
+    4:  {1: (2, 37), 2: (2, 39), 3: (2, 41), 4: (2, 43), 5: (3, 1),
+        6: (3, 3), 7: (3, 5), 8: (3, 7), 9: (3, 9), 10: (3, 11)},
+    5:  {1: (3, 33), 2: (3, 35), 3: (3, 37), 4: (3, 39), 5: (3, 41),
+        6: (3, 43), 7: (4, 1), 8: (4, 3), 9: (4, 5), 10: (4, 7)},
+    6:  {1: (4, 29), 2: (4, 31), 3: (4, 33), 4: (4, 35), 5: (4, 37),
+        6: (4, 39), 7: (4, 41), 8: (4, 43), 9: (5, 1), 10: (5, 3)},
+    7:  {1: (5, 25), 2: (5, 27), 3: (5, 29), 4: (5, 31), 5: (5, 33),
+        6: (5, 35), 7: (5, 37), 8: (5, 39), 9: (5, 41), 10: (5, 43)},
+    8:  {1: (6, 21), 2: (6, 23), 3: (6, 25), 4: (6, 27), 5: (6, 29),
+        6: (6, 31), 7: (6, 33), 8: (6, 35), 9: (6, 37), 10: (6, 39)},
+    9:  {1: (7, 17), 2: (7, 19), 3: (7, 21), 4: (7, 23), 5: (7, 25),
+        6: (7, 27), 7: (7, 29), 8: (7, 31), 9: (7, 33), 10: (7, 35)},
+    10: {1: (8, 13), 2: (8, 15), 3: (8, 17), 4: (8, 19), 5: (8, 21),
+        6: (8, 23), 7: (8, 25), 8: (8, 27), 9: (8, 29), 10: (8, 31)},
+}
+
 
 # ── IOS-Link helpers ───────────────────────────────────────────────────────
 
@@ -167,7 +190,9 @@ class HistReader:
         except Exception:
             return None
 
-    async def read_hist(self) -> dict:
+    async def read_hist(self, wait_for_slot0: bool = False,
+                        ready_timeout: float = 8.0,
+                        ready_interval: float = 0.5) -> dict:
         """Run HIST protocol; return slot data with records as list-of-int."""
         await self._exchange(0x84, 0x00)
         await self._exchange(0x84, 0x01, b'\x00\x00\x00\x00')
@@ -177,7 +202,16 @@ class HistReader:
         rec_size_each = {0: 44, 2: 234}
 
         for slot in (0, 2):
-            _, _, list_pay = await self._exchange(0x84, 0x09, bytes([slot]))
+            if slot == 0 and wait_for_slot0:
+                deadline = asyncio.get_event_loop().time() + ready_timeout
+                while True:
+                    _, _, list_pay = await self._exchange(0x84, 0x09, bytes([slot]))
+                    count = struct.unpack_from('>I', list_pay, 10)[0] if len(list_pay) >= 14 else 0
+                    if count > 0 or asyncio.get_event_loop().time() >= deadline:
+                        break
+                    await asyncio.sleep(ready_interval)
+            else:
+                _, _, list_pay = await self._exchange(0x84, 0x09, bytes([slot]))
             if len(list_pay) < 14:
                 await self._exchange(0x84, 0x0b, bytes([slot]))
                 slots[slot] = {'count': 0, 'records': [], 'date': ''}
@@ -247,6 +281,31 @@ def _fmt_dist(d: dict[int, int]) -> str:
     return "  ".join(parts)
 
 
+def _decode_effect_matrix(records: list[list[int]]) -> tuple[list[list[int]], int, int]:
+    m = [[0] * 11 for _ in range(11)]
+    for film in range(1, 11):
+        for lens in range(1, 11):
+            row_idx, byte_idx = FILM_LENS_POS[film][lens]
+            if row_idx < len(records) and byte_idx < len(records[row_idx]):
+                m[film][lens] = records[row_idx][byte_idx]
+
+    global_total = records[0][1] if records and len(records[0]) > 1 else 0
+    known_total = sum(m[f][l] for f in range(1, 11) for l in range(1, 11))
+    residual = global_total - known_total
+    unknown = abs(residual)
+    return m, global_total, unknown
+
+
+def _format_effect_cells(matrix: list[list[int]]) -> str:
+    cells: list[str] = []
+    for film in range(1, 11):
+        for lens in range(1, 11):
+            value = int(matrix[film][lens])
+            if value > 0:
+                cells.append(f"F{film}/L{lens}={value}")
+    return ", ".join(cells) if cells else "none"
+
+
 def show_map(current_slots: dict, baseline: dict | None, counter: int | None,
              film_reg: int | None, lens_reg: int | None):
     ts = datetime.now().strftime('%H:%M:%S')
@@ -276,6 +335,16 @@ def show_map(current_slots: dict, baseline: dict | None, counter: int | None,
             " session, or no photos taken since last sync.[/dim]\n"
         )
         return
+
+    cur_matrix, cur_global, cur_unknown = _decode_effect_matrix(cur_shot_recs)
+    console.print(
+        "  Decoded current HIST cells: "
+        f"[bold cyan]{_format_effect_cells(cur_matrix)}[/bold cyan]"
+    )
+    if cur_unknown > 0:
+        console.print(f"  [yellow]Decoded residual unknown={cur_unknown}[/yellow]")
+    console.print(f"  Decoded global total cell: [bold cyan]{cur_global}[/bold cyan]")
+    console.print()
 
     # Resolve baseline shot records
     if baseline is not None:
@@ -392,12 +461,14 @@ async def _live_session(reader: "HistReader", baseline: dict | None, last_counte
             new_film = await reader.read_register(0x17)
             new_lens = await reader.read_register(0x1b)
 
-            # Wait 3 s — camera writes HIST asynchronously after shot
-            console.print("[dim]  Waiting 3 s for camera to write HIST…[/dim]")
-            await asyncio.sleep(3.0)
-
-            # Read HIST to see what changed
-            new_slots = await reader.read_hist()
+            # Probe slot 0 until the async HIST write lands.
+            console.print("[dim]  Waiting for slot-0 HIST window to become readable…[/dim]")
+            new_slots = await reader.read_hist(wait_for_slot0=True, ready_timeout=8.0, ready_interval=0.5)
+            slot0_count = new_slots.get(0, {}).get('count', 0)
+            if slot0_count > 0:
+                console.print(f"[dim]  HIST ready: slot0 count={slot0_count}[/dim]")
+            else:
+                console.print("[yellow]  HIST still not ready after 8 s; slot0 remained empty[/yellow]")
             show_map(new_slots, baseline, new_counter, new_film, new_lens)
 
 

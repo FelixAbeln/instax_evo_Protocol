@@ -637,9 +637,8 @@ position (always an **odd** number) within the 44-byte record.
 2. `rec[film_reg − 1][lens_reg]` — per-Film+Lens tally
 3. `rec[36][21]` — global total mirror
 
-When Film=1 (Normal) + Lens=Normal (lens_reg=1): cell 1 (`rec[0][1]`) and cell 2
-(`rec[0][1]`) coincide — the global counter and the per-combo counter are the same byte,
-so only two distinct cells light up (global total and mirror).
+On current Film=1 firmware, `rec[0][1]` should be treated as the global total
+only. The per-lens Film=1 counters live on a shifted byte map in `rec[0]`.
 
 ---
 
@@ -678,20 +677,20 @@ Confirmed by systematic live scan (shots 48→57, 2026-05-19). The user swept le
 
 | App lens # | Effect name | `lens_reg` (byte in `rec[0]`) | Confirmed |
 |-----------|-------------|-------------------------------|-----------|
-| #01 | Normal | **1** | ✓ (global total = same cell) |
-| #02 | Light Leak | **5** | ✓ live (shot 48→49) |
-| #03 | Light Prism | **7** | ✓ live (shot 49→50) |
-| #04 | Vignette | **9** | ✓ live (shot 50→51) |
-| #05 | Soft Glow | **11** | ✓ live (shot 51→52) |
-| #06 | Double Ex. | **13** | ✓ live (shot 52→53) |
+| #01 | Normal | **5** | ✓ runtime-validated |
+| #02 | Light Leak | **7** | ✓ runtime-validated |
+| #03 | Light Prism | **9** | ✓ runtime-validated |
+| #04 | Vignette | **11** | ✓ runtime-validated |
+| #05 | Soft Glow | **13** | ✓ runtime-validated |
+| #06 | Double Ex. | **3** | ✓ runtime-validated |
 | *(gap)* | *(no effect at byte 15 for Film=1)* | — | ✓ (15 never seen) |
 | #07 | Color Shift | **17** | ✓ live (shot 53→54) |
 | #08 | Monochrome Blur | **19** | ✓ live (shot 54→55) |
 | #09 | Color Gradient | **21** | ✓ live (shots 40→41, 55→56) |
 | #10 | Beam Flare | **23** | ✓ live (shot 56→57) |
 
-Film=1 lens_reg sequence: 1 · 5 · 7 · 9 · 11 · 13 · **[skip 15]** · 17 · 19 · 21 · 23.
-Byte 3 is also absent for Film=1 — it is used only by Film=2.
+Film=1 lens_reg sequence: 5 · 7 · 9 · 11 · 13 · **[DE at 3]** · **[skip 15]** · 17 · 19 · 21 · 23.
+Byte 1 is global-only for Film=1; byte 3 is used by the Film=1 Double Ex. slot.
 
 ---
 
@@ -1002,18 +1001,18 @@ rec[0] — identical to Film=2's layout in rec[1]. The actual layout diverges at
 
 | Lens # | "Normal" byte | Actual byte | Shift | Note |
 |--------|---------------|-------------|-------|------|
-| #01 | 1 | **1** | 0 | ✓ normal |
-| #02 | 3 | **5** | +2 | byte 3 skipped ← **DE slot** |
-| #03 | 5 | **7** | +2 | shifted |
-| #04 | 7 | **9** | +2 | shifted |
-| #05 | 9 | **11** | +2 | shifted |
-| #06 | 11 | **13** | +2 | shifted (this IS the DE effect) |
+| #01 | 1 | **5** | +4 | byte 1 is global-only |
+| #02 | 3 | **7** | +4 | shifted |
+| #03 | 5 | **9** | +4 | shifted |
+| #04 | 7 | **11** | +4 | shifted |
+| #05 | 9 | **13** | +4 | shifted |
+| #06 | 11 | **3** | special | DE slot lives on byte 3 |
 | #07 | 13 | **17** | +4 | byte 15 also skipped ← **unknown skip** |
 | #08 | 15 | **19** | +4 | shifted |
 | #09 | 17 | **21** | +4 | shifted |
 | #10 | 19 | **23** | +4 | shifted |
 
-Two bytes in rec[0] are absent from the Film=1 allocation:
+Film=1 reserves two special positions in rec[0]:
 - **Byte 3** — DE slot. Same two-press mechanic as Film=3's rec[2][7]: the Double Exposure
   effect requires two sequential presses to complete one cycle; only the second press writes to
   HIST. A single press leaves no counter trace.
@@ -1021,7 +1020,8 @@ Two bytes in rec[0] are absent from the Film=1 allocation:
   a historical artefact of Film=1 being a legacy mode. Unlike the DE skip (which appears in
   both Film=1 and Film=3), this skip is unique to Film=1.
 
-The two skips shift lenses #02–#06 right by 2 bytes and lenses #07–#10 right by 4 bytes.
+The practical decoder for Film=1 is therefore: `L1..L5 -> 5,7,9,11,13`,
+`L6 -> 3`, `L7..L10 -> 17,19,21,23`, with `rec[0][1]` treated as global-only.
 
 **Film=3 deviations (one byte skip — DE only):**
 
@@ -1055,8 +1055,8 @@ This suggests the firmware knows exactly where each slot should be regardless of
 > the buffer resets to zero; the next read reflects only shots since that clear.
 >
 > **Confirmed 2026-05-19:** at shot #151 all HIST counters were 0 at baseline;
-> after one shot with Film=1 + Lens=6 (Double Ex.) the buffer showed
-> `rec[0][1]=1` (total) and `rec[0][13]=1` (Film=1/Lens=6), proving the buffer
+> after one shot with Film=1 + Lens=5 the buffer showed
+> `rec[0][1]=1` (total) and `rec[0][13]=1` (Film=1/Lens=5), proving the buffer
 > had been zeroed by the preceding app session.
 
 ```python
@@ -1074,8 +1074,9 @@ LENS_NAMES = {
     10: "Beam Flare",
 }
 
-# Film=1 uses a special byte layout (two reserved skips at bytes 3 and 15)
-_FILM1_BYTES = [1, 5, 7, 9, 11, 13, 17, 19, 21, 23]   # index 0 = lens #1
+# Film=1 uses a shifted byte layout: byte 1 is global-only, byte 3 is Double Ex.,
+# and byte 15 remains unused/unknown.
+_FILM1_BYTES = [5, 7, 9, 11, 13, 3, 17, 19, 21, 23]   # index 0 = lens #1
 
 # ─── Shot count lookup ────────────────────────────────────────────────────────
 def hist_shot_count(hist_body: bytes, film: int, lens: int) -> int:

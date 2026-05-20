@@ -66,6 +66,10 @@ cam → phone: op=(0x84,0x0b)  2B   [slot:2B]                         # HIST_DON
   physical shutter fires**. `HIST_LIST_REQ (0x84,09)` polled too quickly
   (<3 s after the shot) returns `count=0`. Wait at least 3 s after detecting a
   shot via `CAMERA_HISTORY_INFO` before querying `(0x84,09)`.
+- There is **no confirmed dedicated "HIST ready" flag** analogous to the image
+  transfer ready bit. The practical readiness probe is `HIST_LIST_REQ` on slot
+  `0x00`: while the async write is still pending, `count=0`; once ready,
+  `count>0` and `HIST_GET_DATA` returns the new window.
 - **`HIST_DONE (0x84,0b)` clears the buffer.** After sending it, the camera
   resets all tally counts to zero. The next `HIST_GET_DATA (0x84,0a)` only
   contains shots accumulated *since the last `(0x84,0b)`*.
@@ -133,8 +137,8 @@ byte position (always an **odd** number) within the 44-byte record.
 2. `rec[film_reg − 1][lens_reg]` — per-Film+Lens tally
 3. `rec[36][21]` — global total mirror
 
-When Film=1 (Normal) + Lens=Normal (lens_reg=1) the global counter and the
-per-combo counter coincide — only two distinct cells light up.
+On current Film=1 firmware, `rec[0][1]` should be treated as the global total
+only. The Film=1 per-lens bytes are shifted and do not directly use byte 1.
 
 ## Film mode and lens effect names
 
@@ -166,23 +170,24 @@ records the byte offset within the indicated `rec` row for every lens slot.
 
 ### Film=1 (Normal)
 
-Confirmed by systematic live scan (shots 48→57). Film=1 has **two byte skips**:
-byte 3 is the DE slot and byte 15 is an unknown skip unique to Film=1.
+Confirmed by systematic live scan and re-validated in Instax Lab runtime logs.
+Film=1 has **two byte skips**: byte 3 is the Double Ex. slot and byte 15 is
+an unknown skip unique to Film=1.
 
 | App lens # | Effect | byte in `rec[0]` |
 |---|---|---|
-| #01 | Normal | **1** (global total = same cell) |
-| #02 | Light Leak | **5** |
-| #03 | Light Prism | **7** |
-| #04 | Vignette | **9** |
-| #05 | Soft Glow | **11** |
-| #06 | Double Ex. | **13** |
+| #01 | Normal | **5** |
+| #02 | Light Leak | **7** |
+| #03 | Light Prism | **9** |
+| #04 | Vignette | **11** |
+| #05 | Soft Glow | **13** |
+| #06 | Double Ex. | **3** |
 | #07 | Color Shift | **17** (skip byte 15) |
 | #08 | Monochrome Blur | **19** |
 | #09 | Color Gradient | **21** |
 | #10 | Beam Flare | **23** |
 
-Sequence: `1 · 5 · 7 · 9 · 11 · 13 · [skip 15] · 17 · 19 · 21 · 23`.
+Sequence: `5 · 7 · 9 · 11 · 13 · [DE at 3] · [skip 15] · 17 · 19 · 21 · 23`.
 
 ### Film=2 (Vivid)
 
@@ -300,8 +305,11 @@ Instead two bytes are absent:
 - **Byte 15** — cause unconfirmed; possibly a second two-press effect,
   firmware padding, or a legacy artefact unique to Film=1.
 
-The skips shift lenses #02–#06 right by 2 bytes and lenses #07–#10 right by
-4 bytes within `rec[0]`.
+The skips shift the low Film=1 lenses away from the naive byte-1 start:
+
+- lenses #01–#05 land on bytes `5,7,9,11,13`
+- lens #06 (Double Ex.) uses byte `3`
+- lenses #07–#10 land on bytes `17,19,21,23`
 
 **Film=3 — one byte skip (DE only):**
 
@@ -455,3 +463,54 @@ The app's `BleWorker._poll_loop` ([instax_lab/gui.py](../instax_lab/gui.py))
 uses exactly this pattern: it polls `(0x00,0x02,[0x04])` for the
 transfer-ready flag and `(0x00,0x02,[0x05])` for the shot counter on every
 cycle, and emits a `shot_counter` UI event whenever the value changes.
+
+## Evaluate mode (HIST matrix-first attribution)
+
+Validated from Instax Lab runtime logs for Film=1 on 2026-05-20:
+
+- `L1 -> rec[0][5]`
+- `L2 -> rec[0][7]`
+- `L3 -> rec[0][9]`
+- `L4 -> rec[0][11]`
+- `L5 -> rec[0][13]`
+- `L6 -> rec[0][3]` (Double Ex.)
+- `L7..L10 -> rec[0][17,19,21,23]`
+- `rec[0][1]` remains the global total only
+
+For app-side attribution, decode Film=1 directly from that shifted byte map
+instead of inferring a Film=1 lens bucket from the global total cell.
+
+Practical Film=1 interpretation:
+
+- `rec[0][1]` is the slot-global total for the current HIST window.
+- the first five Film=1 lens buckets are shifted right by one logical index
+  because byte `3` is reserved for Double Ex.
+- byte `15` remains unused/unknown and causes the later +4 shift.
+
+Recommended live timing:
+
+- Detect shot by `CAMERA_HISTORY_INFO (sub=0x05)` increment.
+- Wait ~3 seconds (camera HIST write latency).
+- Read slot 0 via `(0x84,00/01/02/09/0a/0b)` and apply evaluation above.
+
+Avoid using immediate post-shot `reg 0x17/0x1b` as the sole source of truth for
+count attribution; those reads can be transient during mode transitions.
+
+Runtime validation logs (Instax Lab)
+
+The app logs the decoded window summary for each seed/harvest so you can verify
+the algorithm directly against captured HIST data:
+
+```text
+EVALUATE seed: G=<global> known=<k> unknown=<u>
+EVALUATE harvest: G=<global> known_add=<k> added=<a>
+EVALUATE cells: F1/L1=<n>, F1/L2=<n>, ...
+```
+
+Where:
+
+- `G` = `rec[0][1]` (global total for this window)
+- `known` / `known_add` = sum of directly mapped film/lens cells in the window
+- `unknown` = absolute mismatch between global total and decoded mapped cells
+- `added` = total counts merged from this harvested window into app totals
+- `EVALUATE cells` = decoded non-zero `(film,lens)` buckets for that window

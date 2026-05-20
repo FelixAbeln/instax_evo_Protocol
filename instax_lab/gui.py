@@ -75,6 +75,31 @@ class CameraBackend:
     reading the model ID at connect time.
     """
 
+    # Film/lens positions in the 37x44 HIST shot histogram (slot 0x00).
+    # Indexes are 1-based for human readability: [film][lens] -> (row, byte).
+    _FILM_LENS_POS: dict[int, dict[int, tuple[int, int]]] = {
+           1:  {1: (0, 5), 2: (0, 7), 3: (0, 9), 4: (0, 11), 5: (0, 13),
+               6: (0, 3), 7: (0, 17), 8: (0, 19), 9: (0, 21), 10: (0, 23)},
+        2:  {1: (1, 1), 2: (1, 3), 3: (1, 5), 4: (1, 7), 5: (1, 9),
+             6: (1, 11), 7: (1, 13), 8: (1, 15), 9: (1, 17), 10: (1, 19)},
+        3:  {1: (1, 41), 2: (1, 43), 3: (2, 1), 4: (2, 3), 5: (2, 5),
+             6: (2, 7), 7: (2, 9), 8: (2, 11), 9: (2, 13), 10: (2, 15)},
+        4:  {1: (2, 37), 2: (2, 39), 3: (2, 41), 4: (2, 43), 5: (3, 1),
+             6: (3, 3), 7: (3, 5), 8: (3, 7), 9: (3, 9), 10: (3, 11)},
+        5:  {1: (3, 33), 2: (3, 35), 3: (3, 37), 4: (3, 39), 5: (3, 41),
+             6: (3, 43), 7: (4, 1), 8: (4, 3), 9: (4, 5), 10: (4, 7)},
+        6:  {1: (4, 29), 2: (4, 31), 3: (4, 33), 4: (4, 35), 5: (4, 37),
+             6: (4, 39), 7: (4, 41), 8: (4, 43), 9: (5, 1), 10: (5, 3)},
+        7:  {1: (5, 25), 2: (5, 27), 3: (5, 29), 4: (5, 31), 5: (5, 33),
+             6: (5, 35), 7: (5, 37), 8: (5, 39), 9: (5, 41), 10: (5, 43)},
+        8:  {1: (6, 21), 2: (6, 23), 3: (6, 25), 4: (6, 27), 5: (6, 29),
+             6: (6, 31), 7: (6, 33), 8: (6, 35), 9: (6, 37), 10: (6, 39)},
+        9:  {1: (7, 17), 2: (7, 19), 3: (7, 21), 4: (7, 23), 5: (7, 25),
+             6: (7, 27), 7: (7, 29), 8: (7, 31), 9: (7, 33), 10: (7, 35)},
+        10: {1: (8, 13), 2: (8, 15), 3: (8, 17), 4: (8, 19), 5: (8, 21),
+             6: (8, 23), 7: (8, 25), 8: (8, 27), 9: (8, 29), 10: (8, 31)},
+    }
+
     def __init__(self, ui_q: queue.Queue, address: str):
         self.ui_q    = ui_q
         self.address = address
@@ -102,9 +127,317 @@ class CameraBackend:
         self._shot_counter  = -1
         self._print_counter = -1
 
+        # Gen2 (FI028) effect tally model.
+        # _effect_counts[film][lens] is 1-based (index 0 unused).
+        self._is_gen2_fi028 = False
+        self._effect_counts: list[list[int]] = [[0] * 11 for _ in range(11)]
+        self._tally_total = 0
+        self._unknown_effect_tally = 0
+        self._pending_hist_shots = 0
+        self._last_hist_harvest_ts = 0.0
+        self._last_shot_change_ts = 0.0
+        self._cached_film_reg: int | None = None
+        self._cached_lens_reg: int | None = None
+        self._reg_trace_enabled = True
+        self._last_hist_window: list[list[int]] = [[0] * 11 for _ in range(11)]
+        self._last_hist_global = 0
+        self._use_hist_evaluate_for_adds = False
+
         # Camera path: selects model-specific behaviour after model detection.
         # Defaults to the base (FI028-like) path until the model is known.
         self._path: BaseCameraPath = BaseCameraPath()
+
+    def _emit_tally_state(self):
+        """Push current Gen2 tally state to the UI."""
+        if not self._is_gen2_fi028:
+            return
+
+        film_totals = [sum(self._effect_counts[f][1:11]) for f in range(1, 11)]
+        lens_totals = [sum(self._effect_counts[f][l] for f in range(1, 11))
+                       for l in range(1, 11)]
+        # Important: do NOT add film + lens totals together.
+        # Each shot has exactly one film and one lens, so adding both would
+        # double-count. The canonical total is the sum of the 10x10 matrix.
+        matrix_total = sum(
+            self._effect_counts[f][l]
+            for f in range(1, 11)
+            for l in range(1, 11)
+        )
+        film_total = sum(film_totals)
+        lens_total = sum(lens_totals)
+        self._tally_total = matrix_total
+
+        # Both projections should match the matrix total; log if they diverge.
+        if film_total != matrix_total or lens_total != matrix_total:
+            self._log(
+                "Gen2 tally warning: projection mismatch "
+                f"matrix={matrix_total} film={film_total} lens={lens_total}"
+            )
+
+        unknown_by_lifetime = max(self._shot_counter - self._tally_total, 0) if self._shot_counter >= 0 else 0
+        unknown = max(unknown_by_lifetime, self._unknown_effect_tally)
+
+        self._ui(
+            "effect_tally",
+            film_totals=film_totals,
+            lens_totals=lens_totals,
+            tally_total=self._tally_total,
+            lifetime_shots=self._shot_counter,
+            lifetime_prints=self._print_counter,
+            unknown=unknown,
+        )
+
+    async def _read_reg_80_11(self, reg_id: int, timeout: float = 2.0) -> int | None:
+        """Read one (0x80,0x11) register value byte; returns None on failure.
+
+        Guard against stale/mismatched notifications by validating both opcode
+        and echoed register id (payload[1]).
+        """
+        try:
+            await self._flush_rx()
+            await self._write(make_packet(0x80, 0x11, bytes([reg_id, 0, 0, 0, 0, 0])))
+            deadline = self._loop.time() + timeout
+            while True:
+                left = deadline - self._loop.time()
+                if left <= 0:
+                    return None
+                op1, op2, p = await self._recv_frame(timeout=left)
+                if op1 != 0x80 or op2 != 0x11:
+                    continue
+                if len(p) < 3:
+                    continue
+                # Expected response: [0x00][reg_id][value][param][0x00][0x00]
+                if p[1] != reg_id:
+                    continue
+                return p[2]
+        except Exception:
+            return None
+
+    async def _read_reg_80_11_payload(self, reg_id: int, timeout: float = 2.0) -> bytes | None:
+        """Read one (0x80,0x11) register and return raw payload for tracing."""
+        try:
+            await self._flush_rx()
+            await self._write(make_packet(0x80, 0x11, bytes([reg_id, 0, 0, 0, 0, 0])))
+            deadline = self._loop.time() + timeout
+            while True:
+                left = deadline - self._loop.time()
+                if left <= 0:
+                    return None
+                op1, op2, p = await self._recv_frame(timeout=left)
+                if op1 != 0x80 or op2 != 0x11:
+                    continue
+                if len(p) < 3:
+                    continue
+                if p[1] != reg_id:
+                    continue
+                return p
+        except Exception:
+            return None
+
+    async def _read_support_info(self, sub: int, timeout: float = 2.0) -> bytes | None:
+        """Read SUPPORT_FUNCTION_INFO sub-type with strict response matching."""
+        try:
+            await self._write(make_packet(0x00, 0x02, bytes([sub])))
+            deadline = self._loop.time() + timeout
+            while True:
+                left = deadline - self._loop.time()
+                if left <= 0:
+                    return None
+                op1, op2, p = await self._recv_frame(timeout=left)
+                if op1 != 0x00 or op2 != 0x02:
+                    continue
+                if len(p) < 2:
+                    continue
+                # Echoed subtype is payload[1] for SUPPORT_FUNCTION_INFO replies.
+                if p[1] != sub:
+                    continue
+                return p
+        except Exception:
+            return None
+
+    async def _seed_tally_from_hist(self):
+        """Read slot 0 HIST shot histogram once and seed per-effect counters.
+
+        This is FI028-only. The HIST read is destructive after HIST_DONE.
+        """
+        if not self._is_gen2_fi028:
+            return
+
+        seeded = False
+        try:
+            await self._flush_rx()
+            await self._write(make_packet(0x84, 0x00))
+            await self._recv_frame(timeout=3.0)
+
+            await self._write(make_packet(0x84, 0x01, b"\x00\x00\x00\x00"))
+            await self._recv_frame(timeout=3.0)
+
+            await self._write(make_packet(0x84, 0x02))
+            await self._recv_frame(timeout=3.0)
+
+            await self._write(make_packet(0x84, 0x09, b"\x00"))
+            _, _, list_pay = await self._recv_frame(timeout=3.0)
+            if len(list_pay) < 14:
+                return
+
+            rec_size = struct.unpack_from(">I", list_pay, 2)[0]
+            count = struct.unpack_from(">I", list_pay, 10)[0]
+            if count == 0:
+                return
+
+            req = struct.pack("<H", 0) + b"\x00\x00\x00"
+            await self._write(make_packet(0x84, 0x0A, req))
+            _, _, data_pay = await self._recv_frame(timeout=8.0)
+            if len(data_pay) < 14:
+                return
+
+            # data_pay = [6B header][8B date][hist_body...]
+            record_data = data_pay[6:]
+            if len(record_data) < 8:
+                return
+            hist_body = record_data[8:8 + max(0, rec_size - 8)]
+            if len(hist_body) < (37 * 44):
+                return
+
+            m, global_total, unknown = self._decode_effect_matrix_from_hist_body(hist_body)
+            known_total = sum(m[f][l] for f in range(1, 11) for l in range(1, 11))
+
+            self._effect_counts = m
+            self._unknown_effect_tally += unknown
+            # We send HIST_DONE after seeding, so the next slot-0 window starts
+            # from zero. Reset harvest baseline accordingly.
+            self._last_hist_window = [[0] * 11 for _ in range(11)]
+            self._last_hist_global = 0
+            seeded = True
+            self._log(
+                f"Seeded Gen2 tally from HIST: global={global_total} "
+                f"known={known_total} "
+                f"unknown={unknown}"
+            )
+            self._log(
+                "EVALUATE seed: "
+                f"G={global_total} known={known_total} unknown={unknown}"
+            )
+        except Exception as e:
+            self._log(f"Gen2 HIST tally seed skipped: {e}")
+        finally:
+            # Always try to finish slot read; camera may keep slot busy otherwise.
+            try:
+                await self._write(make_packet(0x84, 0x0B, b"\x00"))
+                await self._recv_frame(timeout=2.0)
+            except Exception:
+                pass
+
+        if seeded:
+            self._emit_tally_state()
+
+    def _decode_effect_matrix_from_hist_body(self, hist_body: bytes) -> tuple[list[list[int]], int, int]:
+        """Decode a 37x44 HIST shot body into the 10x10 effect matrix.
+
+        Returns (matrix, global_total, unknown_count).
+
+        unknown_count is the residual global shots that cannot be assigned to a
+        known film/lens cell from the current map.
+        """
+        rows = [hist_body[i * 44:(i + 1) * 44] for i in range(37)]
+
+        m = [[0] * 11 for _ in range(11)]
+        for film in range(1, 11):
+            for lens in range(1, 11):
+                rr, bb = self._FILM_LENS_POS[film][lens]
+                m[film][lens] = rows[rr][bb]
+
+        global_total = rows[0][1]
+        known_total = sum(
+            m[f][l]
+            for f in range(1, 11)
+            for l in range(1, 11)
+        )
+        residual = global_total - known_total
+        unknown = abs(residual)
+        return m, global_total, unknown
+
+    def _format_effect_cells(self, matrix: list[list[int]]) -> str:
+        cells: list[str] = []
+        for film in range(1, 11):
+            for lens in range(1, 11):
+                value = int(matrix[film][lens])
+                if value > 0:
+                    cells.append(f"F{film}/L{lens}={value}")
+        return ", ".join(cells) if cells else "none"
+
+    async def _harvest_hist_tally_window(self) -> int:
+        """Harvest one Gen2 HIST shot window and add it to local totals.
+
+        Returns number of shots added to local tally.
+        """
+        if not self._is_gen2_fi028:
+            return 0
+
+        added = 0
+        try:
+            await self._flush_rx()
+            await self._write(make_packet(0x84, 0x00))
+            await self._recv_frame(timeout=3.0)
+
+            await self._write(make_packet(0x84, 0x01, b"\x00\x00\x00\x00"))
+            await self._recv_frame(timeout=3.0)
+
+            await self._write(make_packet(0x84, 0x02))
+            await self._recv_frame(timeout=3.0)
+
+            await self._write(make_packet(0x84, 0x09, b"\x00"))
+            _, _, list_pay = await self._recv_frame(timeout=3.0)
+            if len(list_pay) < 14:
+                return 0
+
+            rec_size = struct.unpack_from(">I", list_pay, 2)[0]
+            count = struct.unpack_from(">I", list_pay, 10)[0]
+            if count == 0:
+                return 0
+
+            req = struct.pack("<H", 0) + b"\x00\x00\x00"
+            await self._write(make_packet(0x84, 0x0A, req))
+            _, _, data_pay = await self._recv_frame(timeout=8.0)
+            if len(data_pay) < 14:
+                return 0
+
+            record_data = data_pay[6:]
+            if len(record_data) < 8:
+                return 0
+            hist_body = record_data[8:8 + max(0, rec_size - 8)]
+            if len(hist_body) < (37 * 44):
+                return 0
+
+            win, global_total, unknown_add = self._decode_effect_matrix_from_hist_body(hist_body)
+
+            known_add = sum(win[f][l] for f in range(1, 11) for l in range(1, 11))
+
+            for film in range(1, 11):
+                for lens in range(1, 11):
+                    v = int(win[film][lens])
+                    if v > 0:
+                        self._effect_counts[film][lens] += v
+                        added += v
+            self._log(
+                "EVALUATE harvest: "
+                f"G={global_total} "
+                f"known_add={known_add} added={added}"
+            )
+            self._log(f"EVALUATE cells: {self._format_effect_cells(win)}")
+            if unknown_add > 0:
+                self._unknown_effect_tally += unknown_add
+                self._log(f"HIST matrix residual -> unknown +{unknown_add}")
+        except Exception as e:
+            self._log(f"Gen2 HIST harvest skipped: {e}")
+        finally:
+            try:
+                await self._write(make_packet(0x84, 0x0B, b"\x00"))
+                await self._recv_frame(timeout=2.0)
+            except Exception:
+                pass
+
+        return int(global_total) if 'global_total' in locals() else added
 
     # ── thread entry ──────────────────────────────────────────────────────────
 
@@ -395,6 +728,7 @@ class CameraBackend:
         # path's display_name alongside the raw model string.
         model_id    = info.get("model", "")
         self._path  = get_path(model_id)
+        self._is_gen2_fi028 = (model_id.upper() == "FI028")
         # Initialise the runtime flag from the path's static capability.
         self._transfer_supported = self._path.supports_image_pull
 
@@ -457,6 +791,26 @@ class CameraBackend:
         except asyncio.TimeoutError:
             pass
 
+        # Print-history counter (InfoType=0x03). We currently use the trailing
+        # uint32 as the lifetime print counter estimate.
+        try:
+            await self._write(make_packet(0x00, 0x02, b"\x03"))
+            _, _, pp = await self._recv_frame(timeout=3.0)
+            if len(pp) >= 10:
+                self._print_counter = struct.unpack_from(">I", pp, 6)[0]
+                info["print_counter"] = self._print_counter
+        except asyncio.TimeoutError:
+            pass
+
+        # Gen2 only: seed from slot-0 HIST once, then use HIST windows for all
+        # live attribution during the session.
+        if self._is_gen2_fi028:
+            self._use_hist_evaluate_for_adds = True
+            # Prime current setting cache once at connect.
+            self._cached_film_reg = await self._read_reg_80_11(0x17)
+            self._cached_lens_reg = await self._read_reg_80_11(0x1B)
+            await self._seed_tally_from_hist()
+
         self._ui("camera_info", **info)
         bat = info.get("battery_pct", "?")
         pht = info.get("photos_left", "?")
@@ -469,6 +823,8 @@ class CameraBackend:
                 f"  ↳ Image pull (88,xx) disabled for {self._path.display_name}"
             )
 
+        self._emit_tally_state()
+
     # ── transfer polling loop ─────────────────────────────────────────────────
 
     async def _poll_loop(self):
@@ -477,6 +833,7 @@ class CameraBackend:
         )
         await asyncio.sleep(1.5)
         pulled = 0
+        poll_n = 0
 
         _pull_unsupported_logged = False   # suppress repeated "not available" spam
 
@@ -499,19 +856,49 @@ class CameraBackend:
             # can't pick up a leftover response from a prior operation.
             await self._flush_rx()
 
-            try:
-                await self._write(make_packet(0x00, 0x02, b"\x04"))
-            except Exception as e:
-                self._log(f"Write error: {e}")
-                break
+            # Official app keepalive order: 02 -> 03 -> 01 -> 04 -> 05.
+            p2 = await self._read_support_info(0x02, timeout=2.0)
+            if p2 and len(p2) >= 3:
+                photos_left = p2[2] & 0x0F
+                self._ui("camera_info", photos_left=photos_left)
 
-            try:
-                _, _, p = await self._recv_frame(timeout=3.0)
-            except asyncio.TimeoutError:
+            p3 = await self._read_support_info(0x03, timeout=2.0)
+            if p3 and len(p3) >= 10:
+                p_cnt = struct.unpack_from(">I", p3, 6)[0]
+                if p_cnt != self._print_counter:
+                    self._print_counter = p_cnt
+
+            p1 = await self._read_support_info(0x01, timeout=2.0)
+            if p1 and len(p1) >= 4:
+                self._ui("camera_info", battery_pct=p1[3])
+
+            p4 = await self._read_support_info(0x04, timeout=2.0)
+            if p4 is None:
                 await asyncio.sleep(1.0)
                 continue
+            flag = p4[4] if len(p4) > 4 else 0
+            poll_n += 1
 
-            flag = p[4] if len(p) > 4 else 0
+            # Keep a stable cache of currently selected Film/Lens settings.
+            # Reading these continuously avoids post-shot transient values.
+            if self._is_gen2_fi028:
+                f_now = await self._read_reg_80_11(0x17)
+                l_now = await self._read_reg_80_11(0x1B)
+                if f_now is not None and 1 <= f_now <= 10:
+                    if f_now != self._cached_film_reg:
+                        self._log(f"Film setting now F{f_now}")
+                    self._cached_film_reg = f_now
+                if l_now is not None and 1 <= l_now <= 10:
+                    if l_now != self._cached_lens_reg:
+                        self._log(f"Lens setting now L{l_now}")
+                    self._cached_lens_reg = l_now
+                if self._reg_trace_enabled:
+                    self._log(
+                        "REG TRACE "
+                        f"poll={poll_n} shot={self._shot_counter} "
+                        f"reg17(film)={self._cached_film_reg} "
+                        f"reg1B(lens)={self._cached_lens_reg}"
+                    )
 
             # Piggy-back a live shot-counter read on every poll cycle.
             # CAMERA_HISTORY_INFO (00,02 InfoType=0x05) returns a 6-byte payload
@@ -520,20 +907,69 @@ class CameraBackend:
             # BLE is connected. Reading is non-destructive — safe to poll.
             # See docs/history-log.md "Runtime polling for live counters".
             try:
-                await self._write(make_packet(0x00, 0x02, b"\x05"))
-                _, _, hp = await self._recv_frame(timeout=2.0)
-                if len(hp) >= 6:
+                hp = await self._read_support_info(0x05, timeout=2.0)
+                if hp and len(hp) >= 6:
                     cnt = hp[5]
                     if cnt != self._shot_counter:
                         prev = self._shot_counter
                         self._shot_counter = cnt
                         if prev >= 0 and cnt != prev:
                             self._log(f"Shot counter: {prev} → {cnt}")
+
+                            # Gen2 only: queue a HIST evaluation. The shot
+                            # counter is only the trigger; slot-0 HIST is the
+                            # attribution source once the async write lands.
+                            if self._is_gen2_fi028:
+                                delta = max(cnt - prev, 1)
+                                self._pending_hist_shots += delta
+                                self._last_shot_change_ts = time.time()
+                                self._log(
+                                    f"Shot +{delta} queued for HIST evaluate "
+                                    f"(pending={self._pending_hist_shots})"
+                                )
+
                         self._ui("shot_counter", count=cnt)
             except asyncio.TimeoutError:
                 pass
             except Exception:
                 pass
+
+            # Gen2: evaluate pending shot deltas from slot-0 HIST after the
+            # camera's write latency (~3 s). This is the most reliable source
+            # for effect attribution from live captures.
+            if (
+                self._use_hist_evaluate_for_adds
+                and
+                self._is_gen2_fi028
+                and self._pending_hist_shots > 0
+                and not self._ble_busy
+                and (time.time() - self._last_shot_change_ts) >= 3.0
+                and (time.time() - self._last_hist_harvest_ts) >= 3.0
+            ):
+                added = await self._harvest_hist_tally_window()
+                self._last_hist_harvest_ts = time.time()
+                if added > 0:
+                    self._pending_hist_shots = max(self._pending_hist_shots - added, 0)
+                    self._log(
+                        f"HIST evaluate harvest: +{added} "
+                        f"(pending={self._pending_hist_shots})"
+                    )
+                    self._emit_tally_state()
+                else:
+                    # Keep pending; next cycle will retry.
+                    self._log("HIST evaluate harvest: no new window yet")
+
+            # Refresh print-history counter every ~10 poll cycles.
+            if poll_n % 10 == 0:
+                try:
+                    pp = await self._read_support_info(0x03, timeout=2.0)
+                    if pp and len(pp) >= 10:
+                        p_cnt = struct.unpack_from(">I", pp, 6)[0]
+                        if p_cnt != self._print_counter:
+                            self._print_counter = p_cnt
+                            self._emit_tally_state()
+                except Exception:
+                    pass
 
             if flag != 0x00:
                 # Respect both the path's static capability flag and the
@@ -1355,6 +1791,7 @@ class InstaxApp:
         self._img_h = 0
         self._print_win: tk.Toplevel | None = None
         self._scan_dlg: ScanDialog | None = None
+        self._tally_text: tk.Text | None = None
 
         self._build_ui()
         self.root.after(33, self._poll_queue)
@@ -1434,6 +1871,10 @@ class InstaxApp:
             ("battery_pct",   "Battery"),
             ("photos_left",   "Photos left"),
             ("queue_pending", "Queue pending"),
+            ("lifetime_shots", "Lifetime shots"),
+            ("tally_shots",    "Tallied shots"),
+            ("unknown_shots",  "Unknown shots"),
+            ("lifetime_prints", "Lifetime prints"),
         ]:
             row = ttk.Frame(info_frame)
             row.pack(fill=tk.X, pady=1)
@@ -1445,6 +1886,22 @@ class InstaxApp:
                 side=tk.LEFT, fill=tk.X
             )
             self._info_vars[key] = v
+
+        tally_lf = ttk.LabelFrame(left, text="Gen2 Effect Tallies", padding=6)
+        tally_lf.pack(fill=tk.X, padx=4, pady=4)
+        self._tally_text = tk.Text(
+            tally_lf,
+            height=6,
+            bg="#1a1a1a",
+            fg=FG,
+            font=("Consolas", 8),
+            state="disabled",
+            wrap=tk.WORD,
+            relief="flat",
+            borderwidth=0,
+        )
+        self._tally_text.pack(fill=tk.X, expand=False)
+        self._set_tally_text("Gen2 tally inactive")
 
         xf = ttk.LabelFrame(left, text="Transfer", padding=10)
         xf.pack(fill=tk.X, padx=4, pady=4)
@@ -1587,8 +2044,35 @@ class InstaxApp:
             if msg.get("serial"):  self._info_vars["serial"].set(msg["serial"])
             if bat != "?":         self._info_vars["battery_pct"].set(f"{bat}%")
             if pht != "?":         self._info_vars["photos_left"].set(str(pht))
+            if msg.get("shot_counter") is not None:
+                self._info_vars["lifetime_shots"].set(str(msg["shot_counter"]))
+            if msg.get("print_counter") is not None:
+                self._info_vars["lifetime_prints"].set(str(msg["print_counter"]))
             if msg.get("img_w"):   self._img_w = msg["img_w"]
             if msg.get("img_h"):   self._img_h = msg["img_h"]
+
+        elif kind == "shot_counter":
+            if msg.get("count") is not None:
+                self._info_vars["lifetime_shots"].set(str(msg["count"]))
+
+        elif kind == "effect_tally":
+            self._info_vars["tally_shots"].set(str(msg.get("tally_total", 0)))
+            self._info_vars["unknown_shots"].set(str(msg.get("unknown", 0)))
+            if msg.get("lifetime_shots") is not None and msg.get("lifetime_shots") >= 0:
+                self._info_vars["lifetime_shots"].set(str(msg["lifetime_shots"]))
+            if msg.get("lifetime_prints") is not None and msg.get("lifetime_prints") >= 0:
+                self._info_vars["lifetime_prints"].set(str(msg["lifetime_prints"]))
+
+            film_totals = msg.get("film_totals") or []
+            lens_totals = msg.get("lens_totals") or []
+            if film_totals and lens_totals:
+                film_line = "Film: " + " ".join(
+                    f"F{i+1}={v}" for i, v in enumerate(film_totals)
+                )
+                lens_line = "Lens: " + " ".join(
+                    f"L{i+1}={v}" for i, v in enumerate(lens_totals)
+                )
+                self._set_tally_text(film_line + "\n" + lens_line)
 
         elif kind == "transfer_start":
             self._xfer_status_var.set("Pulling …")
@@ -1647,6 +2131,14 @@ class InstaxApp:
                 messagebox.showerror("Scan Error", msg["msg"], parent=self.root)
 
     # ── log helpers ───────────────────────────────────────────────────────────
+
+    def _set_tally_text(self, text: str):
+        if not self._tally_text:
+            return
+        self._tally_text.configure(state="normal")
+        self._tally_text.delete("1.0", tk.END)
+        self._tally_text.insert(tk.END, text)
+        self._tally_text.configure(state="disabled")
 
     def _append_log(self, text: str):
         tl = text.lower()
