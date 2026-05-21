@@ -2,35 +2,6 @@
 
 ← [Wiki index](README.md)
 
-## Local print log
-
-Every `evo-print` run appends a record to `captures/print-log.jsonl`:
-
-```json
-{
-  "t": 1747397000.0,
-  "image": "F:\\path\\to\\image.jpg",
-  "camera": "FA:AB:BC:11:6F:D2",
-  "model": "FI019",
-  "transferred": true,
-  "printed": false,
-  "photos_left_after": 1
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `t` | Unix timestamp of the operation |
-| `image` | Absolute path to the source image file |
-| `camera` | BLE address of the camera (Link profile) |
-| `model` | Model ID from `DEVICE_INFO_SERVICE` (e.g. `"FI019"`) |
-| `transferred` | `true` if image data was fully sent to camera |
-| `printed` | `true` if `PRINT_IMAGE` (0x10,0x80) was also sent (film ejected) |
-| `photos_left_after` | `photos_left` value from post-print status poll |
-
-`transferred=true, printed=false` means `--enable-print` was not passed — image
-was sent but film was not ejected (safe test mode).
-
 ## Open hypotheses
 
 Things still plausible but not yet confirmed.
@@ -68,6 +39,8 @@ write completes but no reliable ACK is observed and on-device flash state does
 not change consistently. Open whether Gen 1 expects a different `param` byte,
 a different register, or requires the change be staged through a higher-level
 opcode.
+
+## References
 
 
 - [javl/InstaxBLE](https://github.com/javl/InstaxBLE) — Python library for
