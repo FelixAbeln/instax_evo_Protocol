@@ -32,6 +32,31 @@ The recurrence of `0x32` across three independent payloads strongly suggests
 it is a single firmware-side counter being surfaced through multiple opcodes,
 but the specific quantity is still unconfirmed.
 
+### H6 — Evo Wide "Favorites" retrieve/save over Link BLE
+
+Working assumption: FI028 favorites are retrievable and writable over the Link
+BLE profile, but the opcode/register path is not yet mapped in this repo.
+
+What we need to confirm:
+- Read path: enumerate and decode the current favorites set from camera state.
+- Write path: save a changed favorites set and verify it persists after reconnect.
+
+Capture plan:
+1. Record an HCI log while the official app reads the favorites screen without
+   changing values.
+2. Record a second log where one favorite is added/removed and explicitly saved.
+3. Diff only the changed window to isolate candidate opcodes/regs.
+
+Likely surfaces to inspect first:
+- `(0x80,0x11)` register reads/writes around the same poll loop.
+- `(0x00,0x02)` InfoType payload deltas while entering/leaving favorites UI.
+- Any previously unseen opcode family emitted only during favorites save.
+
+Done criteria:
+- Documented request/response layout for both read and write.
+- Repro script that reads favorites, writes one change, reconnects, then reads
+  back the same persisted value.
+
 ### FI019 direct flash write `(0x80,0x11 reg 0x0B)`
 
 Confirmed working on FI028 (see [registers.md](registers.md)); on FI019 the
