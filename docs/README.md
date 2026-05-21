@@ -18,7 +18,21 @@ ending in `(IOS)`/`(BLE)`; the protocol itself has nothing to do with iOS.
 The separate "Android profile" used by the Instax Android app is described once
 in [android-legacy.md](android-legacy.md) — we don't use it in this project.
 
-## Reading order
+## If you're implementing the protocol from scratch
+
+Start here — this is the minimum required to ship a working client:
+
+1. **[quickstart.md](quickstart.md)** — single-page runnable walkthrough:
+   connect, init, print, live view, share-pull, auto-transfer. All Python
+   skeletons inlined; no other reading required to get a basic client working.
+2. **[link-protocol.md](link-protocol.md)** — the canonical opcode table and
+   packet framing reference.
+3. **[glossary.md](glossary.md)** — terminology and notation used everywhere
+   else (InfoType, slot, HIST, transfer-ready flag, etc.).
+
+After those three, jump to the per-flow page you need from the table below.
+
+## Full reading order (topical)
 
 1. [overview.md](overview.md) — coverage matrix, supported cameras, GATT service
 2. [link-protocol.md](link-protocol.md) — packet framing, opcode table, InfoType values
@@ -33,7 +47,8 @@ in [android-legacy.md](android-legacy.md) — we don't use it in this project.
 11. [model-quirks.md](model-quirks.md) — Gen 1 / Gen 2 / Gen 3 differences
 12. [implementation.md](implementation.md) — Windows/bleak quirks, capture logs, local print log
 13. [roadmap.md](roadmap.md) — open hypotheses, known gaps, references
-14. [android-legacy.md](android-legacy.md) — Android profile (not used)
+14. [glossary.md](glossary.md) — terms, abbreviations, notation
+15. [android-legacy.md](android-legacy.md) — Android profile (not used)
 
 ## Cross-cutting topics
 
