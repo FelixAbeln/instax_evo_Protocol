@@ -1,7 +1,8 @@
-"""IOS Link BLE protocol constants and packet utilities.
+"""Instax Link BLE protocol constants and packet utilities.
 
 Shared by the GUI backend, camera paths, and any CLI tools that speak
-the Instax IOS-Link framing protocol.
+the Instax Link framing protocol. See docs/link-protocol.md for the
+full packet format and opcode table.
 
 Packet format
 -------------
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import struct
 
-# ── GATT characteristic UUIDs (all Instax IOS-profile cameras) ────────────────
+# ── GATT characteristic UUIDs (shared by all Instax Link-profile cameras) ────
 NOTIFY_UUID = "70954784-2d83-473d-9e5f-81e1d02d5273"
 WRITE_UUID  = "70954783-2d83-473d-9e5f-81e1d02d5273"
 
@@ -27,7 +28,7 @@ MINI_EVO_ADDR    = "FA:AB:BC:11:6F:D2"   # Instax Mini Evo (FI019)
 
 
 def make_packet(op1: int, op2: int, payload: bytes = b"") -> bytes:
-    """Build an Instax IOS-Link protocol request packet (phone → camera)."""
+    """Build an Instax Link protocol request packet (phone → camera)."""
     header = b"\x41\x62"
     length = struct.pack(">H", 7 + len(payload))
     body   = header + length + bytes([op1, op2]) + payload

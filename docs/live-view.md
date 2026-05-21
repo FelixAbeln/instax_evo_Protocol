@@ -14,7 +14,7 @@ thereof) tells the camera which mode to use. **Do not close and reopen the
 session between pulls** — keep one `(0x82,00)` session open for the entire
 image/sequence.
 
-## Confirmed session timing (Mini Evo session 156)
+## Historical session timing (Mini Evo session 156)
 
 From a decoded Windows HCI log (`captures/handle_split.txt`, UTF-16 LE):
 
@@ -45,12 +45,14 @@ Key observations:
 - **Pull cadence**: 50 ms between sends (20 fps). Implement with a ~50 ms
   notification drain window after each pull; total per-frame latency ≈ 50–100 ms.
 
+This older Mini Evo session included `(0x80,0x15)` immediately before opening
+live view. Current maintained understanding is narrower: `0x80,0x15` is seen in
+some historical sessions and in queue/history image flows, but it is not a
+universal prerequisite for the current FI028 remote-shoot/live-view control path.
+
 ## Full live view sequence
 
 ```
-phone → cam: op=(0x80,0x15)  payload=[17×0x00]   prepare
-cam → phone: op=(0x80,0x15)  [response]           ACK (Mini Evo: 1B 0xBF; Wide: 17B)
-
 # Flush any stale notifications from _rx before opening
 phone → cam: op=(0x82,0x00)  payload=[0x00]       open session (slot 0)
 cam → phone: op=(0x82,0x00)  [0x00]               ACK
@@ -72,6 +74,17 @@ loop until user stops or camera sends (0x82,02):
         # reset frame_count → 0 and continue pulling
 ```
 
+Optional historical pre-step seen in some sessions:
+
+```
+phone → cam: op=(0x80,0x15)  payload=[17×0x00]
+cam → phone: op=(0x80,0x15)  [response]
+```
+
+Do not treat that pre-step as a blanket requirement for current live-view
+support. The May 2026 FI028 remote-shoot flow that the repo now mirrors relies
+on `0x82,0x00` / `0x82,0x01` refresh windows without requiring `0x80,0x15`.
+
 > **Inline transfer after shutter (confirmed 2026-05-17):** When the camera
 > fires the shutter during live view it sends a spontaneous `(0x82,02)` close.
 > Instead of exiting the session management loop entirely, the correct approach
@@ -79,6 +92,14 @@ loop until user stops or camera sends (0x82,02):
 > the `(0x82,10/20/21/22)` transfer → sleep ~2 s for camera recovery → reopen
 > with `(0x82,00)` → continue pulling frames. The user sees no
 > "session stopped / starting" interruption.
+
+FI019 note:
+there is a second working `0x82` entry path in this repo. The app-style
+"Download Photo" button stops live view first and then runs
+`(0x82,10/0x20/0x21/0x22)` without waiting for a spontaneous camera
+`(0x82,0x02)`. That sequence returned a JPEG successfully on 2026-05-21. So on
+Gen 1, do not assume that the only valid way into the `0x82` receive flow is a
+shutter-fired close notification.
 
 ## `(0x82,01)` response layout
 

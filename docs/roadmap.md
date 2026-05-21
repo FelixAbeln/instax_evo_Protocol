@@ -85,16 +85,17 @@ Instax app doing an image transfer from the Mini Evo.*
 → *Test: poll all (0x00,02) InfoTypes while pressing Share; compare payload
 snapshots.*
 
-**Theory D:** Mini Evo firmware update (2026) changed the pairing/bonding flow
-and may also have changed or added the 0x88 protocol.
+**Theory D:** Mini Evo firmware update (2026) changed the higher-level session
+state around transfer support. Older pairing-specific suspicion is no longer
+the default explanation.
 
 ### H2 — Meaning of `CAMERA_FUNCTION_INFO` byte[0] and byte[1]
 
 Normal Wide Evo value: `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`
 Keepalive value (different state): `02 32 00 00 00 00 00 00 00 00 00 00 00 00 00 00`
 
-- **byte[1] = 0x32 = 50**: also appears in `LIVE_VIEW_PREPARE` response
-  byte[8] on Wide Evo. Could be a capability register, print count, or mode
+- **byte[1] = 0x32 = 50**: also appears in historical `0x80,0x15` response
+  payloads on Wide Evo. Could be a capability register, print count, or mode
   identifier.
 - **byte[0] = 0x02 vs 0x03**: may encode a camera mode or state-machine state
   (idle=0x02, live-view-active=0x03?).
@@ -119,7 +120,7 @@ See [image-pull.md](image-pull.md).
 ### H5 — Metadata byte[29] = 0x32
 
 `(0x88,01)` metadata byte[29] = 0x32 = 50. Also appears in
-`CAMERA_FUNCTION_INFO` data[1] and in `LIVE_VIEW_PREPARE` response byte[8] on
+`CAMERA_FUNCTION_INFO` data[1] and in historical `0x80,0x15` response byte[8] on
 Wide Evo. Possible meanings:
 - Total digital transfers made by this camera (lifetime counter)
 - A capability/mode register value that is coincidentally the same

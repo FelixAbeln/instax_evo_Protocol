@@ -2,7 +2,7 @@
 # Instax Evo BLE Protocol Notes — LEGACY ARCHIVE
 
 > ⚠️ **This file is the original monolithic protocol notebook, preserved verbatim
-> as a legacy reference.** The active documentation has moved to the
+> as a legacy reference. It contains superseded hypotheses and stale mappings.** The active documentation has moved to the
 > [wiki](README.md) — split into topical pages and with "IOS profile"
 > renamed to "Link protocol" throughout the new pages. Nothing has been deleted
 > from this file; all original content (including the now-deprecated `(IOS)` /
@@ -18,7 +18,7 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 
 ---
 
-## Protocol Coverage Status (as of 2026-05-18)
+## Protocol Coverage Status (as of 2026-05-20)
 
 | Feature | Evo Wide FI028 (Gen 2) | Mini Evo FI019 (Gen 1) | Opcode(s) |
 |---|---|---|---|
@@ -26,12 +26,12 @@ All findings derived from Android bugreport HCI captures cross-referenced with
 | Status poll (battery, photos left, model) | ✅ | ✅ | `(00,02)` |
 | Transfer-ready flag detection | ✅ | ✅ (flag seen, transfer not usable) | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
 | **Print** (phone → camera → film ejected) | ✅ | ✅ | `(80,xx)` print opcodes |
-| Flash control | ✅ | ❓ Not tested | `(80,11)` reg_id=0x0b |
-| Live view (pull loop) | ✅ | ⚠️ Partial — worked then failed; needs more investigation | `(82,00/01/02)` |
-| Auto-transfer after shutter (inline) | ✅ seamless LV resume | ❓ Unknown — `(82,10/20/21/22)` untested on Gen 1 | `(82,10/20/21/22)` |
+| Flash control | ✅ | ❌ Direct FI019 probes still unresponsive | `(80,11)` reg_id=0x0b |
+| Live view (pull loop) | ✅ | ✅ Works with warm-up: early pulls may return short `0x02` payloads before JPEG frames begin | `(82,00/01/02)` |
+| Auto-transfer / Download Photo `(82,10/20/21/22)` | ✅ seamless LV resume after shutter close | ✅ Working after app-style live-view stop; standalone `(82,10)` during active live view still returns `c0` | `(82,10/20/21/22)` |
 | Share-button image pull | ✅ | ❌ Camera disconnects on `(88,00)` | `(88,00…0b)` |
 | History log / shot & print counts | ✅ Slot format + record sizes confirmed; HIST buffer **fully mapped** — 37×44-byte diagonal-banded tally; Films 1–10 all 10 lens positions each confirmed live 2026-05-19; structural pattern (20 flat-position stride) confirmed; Film=1 and Film=3 DE-slot deviations documented | ⏳ Not tested | `(84,xx)` `(00,02)` InfoType 5 |
-| Live shot counter (per-effect tracking) | ✅ `CAMERA_HISTORY_INFO` byte[2] increments per shot; confirmed live 2026-05-18 | ❓ Unknown | `(00,02)` InfoType 5 |
+| Live shot counter (lifetime) | ✅ `CAMERA_HISTORY_INFO` payload[5] increments per shot; confirmed live 2026-05-18 | ✅ Confirmed on FI019 probe 2026-05-20 (`84 -> 102` over 120 s) | `(00,02)` InfoType 5 |
 | `(82,10/20/21/22)` via Share button | ❓ Only seen after shutter | ❓ Unknown | — |
 | Camera settings registers (0x0B–0x1B) | ✅ Values observed; Flash write confirmed; others read-only | ❓ Unknown | `(80,11)` read/write |
 | `DEVICE_INFO` strings 0x03/0x04/0x05 | ✅ Firmware version strings (main / sub / BLE) | ❓ Unknown | `(00,01)` InfoType 3–5 |
@@ -243,7 +243,7 @@ cross-referenced with the gen 2 Evo Wide HCI capture:
 | 0x82 | 0x00 | `LIVE_VIEW_START` | Payload = `[1B slot_index]`; camera ACKs with `[slot_index]`. |
 | 0x82 | 0x01 | `LIVE_VIEW_FRAME` | Phone→cam: 0-byte payload (pull request). Cam→phone: `[2B chunk_idx=0x0001][3B frame_header][JPEG…]`. Each pull returns one **complete, fresh JPEG** of the current view (~20 fps). BLE fragmentation (bonded MTU 247): arrives as **5 ATT notifications** — 244+244+244+244+51 = 1027 bytes total. **JPEG starts at payload[5]** (after 2B chunk idx + 3B header). **Confirmed: 176 frames in 8.57 s (btsnoop), live view working on both FI019 and FI028 (2026-05-17).** |
 | 0x82 | 0x02 | `LIVE_VIEW_END` | Payload = `[1B slot_index]`; camera ACKs with `[0x00]`. |
-| 0x82 | 0x10 | `IMG_HIST_QUERY` | **Phone→cam:** `[0x00]` — initiates auto-transfer session after live view. **Cam→phone:** `[0x00]` — acknowledged. Sent immediately after the app acks the spontaneous `(82,02)` close (shutter fired); the camera has not yet finished encoding the photo at this point. |
+| 0x82 | 0x10 | `IMG_HIST_QUERY` | **Phone→cam:** `[0x00]` — initiates auto-transfer session after live view. **Cam→phone:** `[0x00]` on FI028 after a shutter-fired `(82,02)` close; FI019 standalone probe during live view returned `[0xc0]` and did not trigger capture. Sent immediately after the app acks the spontaneous `(82,02)` close (shutter fired); the camera has not yet finished encoding the photo at this point. |
 | 0x82 | 0x20 | `IMG_HIST_POLL` | **Phone→cam:** empty payload — polls whether the image is ready. **Cam→phone:** `[0x02]` = not ready (retry); `[0x00][0x02][total_size:4B BE][chunk_size:4B BE]` = READY. Poll at ~500 ms intervals; camera takes 4–5 s to encode a fresh photo. |
 | 0x82 | 0x21 | `IMG_HIST_CHUNK` | **Cam→phone (push):** `[chunk_idx:4B BE][jpeg_data…]` — camera pushes each chunk after the previous ACK. **Phone→cam (ack):** `[chunk_idx:4B BE]` — ACK for the received chunk. Camera pushes the next chunk after each ACK. |
 | 0x82 | 0x22 | `IMG_HIST_END` | **Phone→cam:** empty payload — phone signals all chunks received. **Cam→phone:** `[0x00]` — done. |
@@ -291,7 +291,7 @@ Response payload format: `[0x00][InfoType_echo][data…]`
 | 0x00 | `IMAGE_SUPPORT_INFO` | **`[width: 2B BE][height: 2B BE][…]`** — always query this first; use the camera-reported size for all image prep. See [film dimensions table](#film-dimensions-by-model--print-mode). |
 | 0x01 | `BATTERY_INFO` | `[battery_state][battery_pct]`. State: 0=critical, 1=low, 2=medium, 3=high, 4=full. |
 | 0x02 | `PRINTER_FUNCTION_INFO` | `[status_byte][0x00][shots_in_pack: 2B]…`. `photos_left = status_byte & 0x0F`, `charging = bool(status_byte & 0x80)`. Wide Evo: status=0x26 → 6 remaining, shots_in_pack=0x000C=12. |
-| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: field_a][uint32 BE: field_b]`. Semantics TBD — does **not** directly report total shots or prints. Bugreport 0518 example: `00000009 00000005` (field_a=9, field_b=5). See HIST `(84,xx)` for the shot/print counts shown in the app's Usage History screen. |
+| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: transfer_count][uint32 BE: print_count]` in current probes. FI019 probe 2026-05-20 observed stable `transfers=60`, `prints=16` during a shot-only window. This is not the same as HIST app Usage History totals. |
 | 0x04 | `CAMERA_FUNCTION_INFO` | 16B data. **`data[2]` (= full payload[4]) = `0x01` when camera is in transfer-ready state**; `0x00` at rest. The flag is raised by the camera ~700 ms after the phone sends `(0x85,0x01)` DOWNLOAD_INITIATE — it does **not** rise on its own. Confirmed from btsnoop 2026-05-18. Normal response (Wide Evo): `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`; `data[0]`=0x03, `data[1]`=0x50. Semantics of other bytes TBD. |
 | 0x05 | `CAMERA_HISTORY_INFO` | 6B response `[0x00][0x05][0x00][0x00][0x00][counter]`. **Counter at pay[5]** (confirmed, btsnoop 2026-05-18). Increments for **every** shot fired, including shots taken while BLE is connected to a third-party script (i.e. shots that are **not** written to HIST). The app's "Shots" total comes from `HIST_GET_DATA` record counts, not from this counter — so counter and app shot count can diverge. Bugreport 0518 example: counter=`0x28`=40 at session start; incremented `0x28`→`0x29`→`0x2a`→`0x2b` (+3) in real-time during that btsnoop session. |
 
@@ -1777,7 +1777,8 @@ This protocol was only observed after **remote shutter captures** (phone app shu
 
 The Mini Evo (Gen 1, model FI019, firmware-updated) participates in the IOS Link
 protocol for status queries and printing, but **does not support the `(88,xx)` image
-transfer protocol** and has only partial live view support.
+transfer protocol**. Live view works with warm-up, and the `0x82` picture
+receive flow is state-dependent.
 
 ### Confirmed behaviour (live tests, Mini Evo `FA:AB:BC:11:6F:D2`)
 
@@ -1787,8 +1788,8 @@ transfer protocol** and has only partial live view support.
 | `CAMERA_FUNCTION_INFO` poll | ✅ Works | Flag appears (0x01) when user presses Transfer |
 | **Print** (phone → camera → film ejected) | ✅ Works | Same `(80,xx)` print sequence as Gen 2 |
 | `(88,00)` IMAGE_TRANSFER_START | ❌ **Camera disconnects** | Sending `(88,00)` causes the camera to drop the BLE link immediately |
-| Live view `(82,xx)` | ⚠️ **Partial** | Frames received in initial tests (same `(82,00/01/02)` framing as Gen 2) but subsequently failed to maintain a stable session. Root cause unknown — may be a timing, pairing, or firmware issue. Needs further investigation. |
-| Auto-transfer after shutter `(82,10/20/21/22)` | ❓ Not tested | Unknown whether Gen 1 supports this after a live-view shutter |
+| Live view `(82,xx)` | ✅ Works with warm-up | `(82,00)` ACK succeeds; early `(82,01)` pulls may return short `0x02` payloads before valid JPEG frames begin |
+| `0x82` picture receive flow `(82,10/20/21/22)` | ✅ Works with app-style state | During active live view, standalone `(82,10)` returned `[0xc0]` and no image. But the app-style sequence "open live view -> pull frames -> stop live view -> `(82,10/20/21/22)`" returned a 28,795 B JPEG on 2026-05-21 |
 | `(84,xx)` log queries | ⏳ Not explored | — |
 
 ### `(88,xx)` not supported on Gen 1

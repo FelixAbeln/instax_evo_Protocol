@@ -3,10 +3,10 @@
 Reverse-engineered notes for the Instax camera/printer BLE protocol used by the
 Mini Evo, Evo Wide, and (assumed) Mini Evo Cinema.
 
-This wiki is split into topical pages. As of 2026-05-19 every piece of
-concrete information from the original monolithic notebook has been ported
-into these pages — the legacy file [protocol-legacy.md](protocol-legacy.md)
-is retained only as a historical archive and is safe to delete.
+This wiki is split into topical pages. The pages in this index are the current
+source of truth. The legacy file [protocol-legacy.md](protocol-legacy.md) is
+retained only as a historical archive and still contains superseded hypotheses,
+stale terminology, and exploratory notes that have since been corrected here.
 
 ## Terminology
 

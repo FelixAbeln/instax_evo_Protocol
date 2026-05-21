@@ -11,11 +11,11 @@ CoreBluetooth/BlueZ.
 | MTU at connect | Meaning | Action required |
 |---|---|---|
 | 247 | Device is bonded (paired) | None — `start_notify` will succeed |
-| 23 (default) | Not bonded | Call `client.pair()` before `start_notify()` |
+| 23 (default) | Session/bonding state not ready yet | Reconnect after ensuring the OS-level bond exists |
 
-Gen 1 cameras require pairing even on reconnect. After `pair()`, sleep ≥ 3 s
-before calling `start_notify()` — the GATT cache on Windows may not yet be
-populated.
+Older probe helpers called `client.pair()` here. The maintained app flow now
+avoids treating that as a required reconnect step and instead relies on the
+existing Windows bond plus a fresh client + retry logic.
 
 ## Post-disconnect GATT "Characteristic not found"
 
@@ -40,12 +40,11 @@ client = BleakClient(dev, timeout=30)
 client = BleakClient(address, timeout=30)
 ```
 
-## Reliable subscribe sequence (Gen 1)
+## Reliable subscribe sequence
 
 ```python
 await client.connect()
-await client.pair()
-await asyncio.sleep(3.0)   # wait for GATT cache to populate
+await asyncio.sleep(1.0)   # wait for GATT cache to populate
 
 # Retry start_notify up to 3 times with 2 s delay
 for attempt in range(1, 4):
@@ -75,14 +74,10 @@ repeats. Sequence counter is global across BLE connection sessions.
 
 ## Connection notes
 
-- **Link profile requires passkey/PIN pairing** (at least on Gen 1 after
-  firmware update). The user must pair once via Windows Bluetooth settings (a
-  6-digit code appears on screen or in the app).
-- After pairing, call `client.pair()` in bleak before subscribing — this
-  re-establishes the encrypted session for the current connection. Without it,
-  CCCD writes fail with "Operation aborted".
-- `pair()` returns `None` when already bonded (correct — the encrypted session
-  is still established).
+- Gen 1 may require a one-time Windows Bluetooth pairing step after firmware or
+  bond resets.
+- The maintained app flow does not rely on explicit `client.pair()` calls on
+  every session.
 - If the camera's firmware was updated, its bond database is wiped. Remove the
   INSTAX entry from Windows Bluetooth settings and re-pair.
 - BLE device name format: `INSTAX-[serial] (IOS)` (Mini Evo) /

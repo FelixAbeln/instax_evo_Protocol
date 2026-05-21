@@ -5,19 +5,22 @@
 ## Gen 1 — Mini Evo (FI019)
 
 The Mini Evo participates in the [Link protocol](link-protocol.md) for status
-queries and printing, but **does not support the `(0x88,xx)` image transfer
-protocol** and has only partial live view support.
+queries and printing, and **does not support the `(0x88,xx)` image transfer
+protocol**. Live view works, but Gen 1 often needs a short warm-up period.
 
 ### Confirmed behaviour (live tests, `FA:AB:BC:11:6F:D2`)
 
 | Feature | Status | Notes |
 |---|---|---|
 | Status queries `(0x00,xx)` | ✅ Works | Battery, model, serial, photos_left all returned correctly |
+| Flash control `(0x80,0x11, reg 0x0B)` | ❌ Still unresolved in repo app | Direct probes and app writes still showed no reliable `(0x80,0x11)` ACK on 2026-05-21, even though the same register is confirmed on FI028 |
+| `PRINT_HISTORY_INFO` `(0x00,0x02,[0x03])` | ✅ Works | Probe-confirmed on FI019: readable (`transfers=60`, `prints=16`); increments still to validate with print/transfer event |
+| `CAMERA_HISTORY_INFO` `(0x00,0x02,[0x05])` | ✅ Works | Probe-confirmed on FI019: increments live (`84 -> 102` during 120 s shot run) |
 | `CAMERA_FUNCTION_INFO` poll | ✅ Works | Flag appears (0x01) when user presses Transfer |
 | **Print** (phone → camera → film ejected) | ✅ Works | Same `(0x80,xx)` print sequence as Gen 2 |
 | `(0x88,00)` IMAGE_TRANSFER_START | ❌ **Camera disconnects** | Sending `(0x88,00)` causes the camera to drop the BLE link immediately |
-| Live view `(0x82,xx)` | ⚠️ **Partial** | Frames received in initial tests (same `(0x82,00/01/02)` framing as Gen 2) but subsequently failed to maintain a stable session. Root cause unknown — may be timing, pairing, or firmware. |
-| Auto-transfer after shutter `(0x82,10/20/21/22)` | ❓ Not tested | Unknown whether Gen 1 supports this after a live-view shutter |
+| Live view `(0x82,xx)` | ✅ **Works (warm-up required)** | Probe-confirmed on FI019: `(0x82,00)` ACK succeeds; early `(0x82,01)` pulls may return short payload `0x02`, then valid JPEG frames follow (example run: 10 warm-up pulls then 20 valid frames). |
+| `0x82` picture receive flow `(0x82,10/20/21/22)` | ✅ Works with app-style state | During active live view, standalone `(0x82,10)` got `[0xc0]` and no image. But the app-style sequence "open live view -> pull frames -> stop live view -> `(0x82,10/20/21/22)`" returned a 28,795 B JPEG on 2026-05-21. |
 | `(0x84,xx)` log queries | ⏳ Not explored | — |
 
 ### `(0x88,xx)` not supported on Gen 1
@@ -37,6 +40,33 @@ remains usable for live view and status polling.
 Gen 1 presumably uses a different mechanism to transfer images to a phone
 (possibly Wi-Fi or a separate app flow not captured in these sessions). The
 `(0x88,xx)` opcodes may be Gen 2+ only.
+
+### Direct comparison to Gen 2 (FI028)
+
+| Capability | Gen 1 FI019 | Gen 2 FI028 |
+|---|---|---|
+| Print `(0x10,xx)` | ✅ | ✅ |
+| Live view `(0x82,00/01/02)` | ✅ Works (warm-up needed) | ✅ Stable |
+| `0x82` picture receive flow `(0x82,10/20/21/22)` | ✅ Working, but state-dependent | ✅ Confirmed |
+| Share pull `(0x88,xx)` | ❌ Disconnects | ✅ Confirmed |
+| Counter fields `(0x00,0x02,[0x03/0x05])` | ✅ Readable | ✅ Readable |
+
+### App implementation note
+
+The repo app uses the `0x82` family in two distinct ways:
+
+1. inside the live-view loop after a spontaneous camera `(0x82,0x02)` close on
+  FI028-style shutter events;
+2. from the live-view window's "Download Photo" button, which stops live view
+  first and then runs `(0x82,0x10/0x20/0x21/0x22)` directly.
+
+That second path is now probe-confirmed on FI019. So the corrected Gen 1 rule
+is: `(0x82,0x10)` is not a generic live-view shutter opcode, but the full
+app-style `0x82` receive flow works once live view has been stopped.
+
+This is the main documentation correction from the May 21 cleanup: earlier repo
+notes that treated FI019 `0x82` receive support as untested or absent are now
+obsolete.
 
 ### Mini Evo — transfer-mode BLE quirks
 
@@ -80,20 +110,12 @@ this, the camera uses the same Link service UUID and identical protocol
 framing. The `(BLE)` label appears to be a firmware artifact, not an indicator
 of the Android profile.
 
-### Pairing required every session
+### Pairing / bond state
 
-Wide Evo does not retain bond state across connections the way Mini Evo does.
-Call `await client.pair()` after connecting and before writing CCCD. The
-pairing completes with a simple PIN confirmation dialog (no real PIN — just
-click through). `pair()` may raise `"OPERATION_ALREADY_IN_PROGRESS"` on
-retries; treat as non-fatal and wait ~3 s before proceeding.
-
-### Windows interference quirk
-
-If the Mini Evo (`FA:AB:BC:11:6F:D2`) is listed in Windows Bluetooth devices,
-its bond record interferes with Wide Evo pairing and causes repeated `pair()`
-failures. **Remove the Mini Evo from Windows Bluetooth settings** before
-pairing the Wide Evo.
+Older notes treated explicit `client.pair()` calls as part of the normal Wide
+Evo connect sequence. Current repo behavior is simpler: the app connects and
+subscribes without relying on a per-session `pair()` call. If Windows loses the
+bond, fix that at the OS Bluetooth layer and reconnect.
 
 ### GATT handles
 
@@ -118,11 +140,7 @@ dev = await BleakScanner.find_device_by_filter(
 )
 client = BleakClient(dev, timeout=30)
 await client.connect()
-try:
-    await client.pair()
-except Exception:
-    pass                              # non-fatal; camera may already be pairing
-await asyncio.sleep(3.0)             # settle after pair before subscribing
+await asyncio.sleep(1.0)             # settle before subscribing
 await client.start_notify(NOTIFY_UUID, handler)
 ```
 

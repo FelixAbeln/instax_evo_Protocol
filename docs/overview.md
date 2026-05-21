@@ -2,7 +2,7 @@
 
 ← [Wiki index](README.md)
 
-## Protocol coverage status (as of 2026-05-19)
+## Protocol coverage status (as of 2026-05-21)
 
 | Feature | Evo Wide FI028 (Gen 2) | Mini Evo FI019 (Gen 1) | Opcode(s) |
 |---|---|---|---|
@@ -10,16 +10,34 @@
 | Status poll (battery, photos left, model) | ✅ | ✅ | `(00,02)` |
 | Transfer-ready flag detection | ✅ | ✅ (flag seen, transfer not usable) | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
 | **Print** (phone → camera → film ejected) | ✅ | ✅ | `(80,xx)` print opcodes |
-| Flash control | ✅ | ❓ Not tested | `(80,11)` reg_id=0x0b |
-| Live view (pull loop) | ✅ | ⚠️ Partial — worked then failed; needs more investigation | `(82,00/01/02)` |
-| Auto-transfer after shutter (inline) | ✅ seamless LV resume | ❓ Unknown — `(82,10/20/21/22)` untested on Gen 1 | `(82,10/20/21/22)` |
+| Flash control | ✅ Confirmed `reg 0x0B` mapping and working app flow (`0=Auto, 1=On, 2=Off`) | ❌ Direct FI019 probes and repo-app writes still unresponsive as of 2026-05-21 | `(80,11)` reg_id=0x0b |
+| Live view (pull loop) | ✅ | ✅ Works with warm-up: early pulls may return short `0x02` payloads before JPEG frames begin | `(82,00/01/02)` |
+| Auto-transfer / Download Photo `(82,10/20/21/22)` | ✅ seamless LV resume after shutter close | ✅ Working after app-style live-view stop; standalone `(82,10)` during active live view still returns `c0` and is not a generic shutter opcode | `(82,10/20/21/22)` |
 | Share-button image pull | ✅ | ❌ Camera disconnects on `(88,00)` | `(88,00…0b)` |
 | History log / shot & print counts | ✅ HIST buffer **fully mapped** — 37×44 diagonal-banded tally; all 10 films × 10 lens positions confirmed live 2026-05-19 | ⏳ Not tested | `(84,xx)` `(00,02)` InfoType 5 |
-| Live shot counter (per-effect tracking) | ✅ `CAMERA_HISTORY_INFO` byte[2] increments per shot | ❓ Unknown | `(00,02)` InfoType 5 |
-| Camera settings registers (0x0B–0x1B) | ✅ Values observed; Flash write confirmed; others read-only | ❓ Unknown | `(80,11)` read/write |
+| Live shot counter (lifetime) | ✅ `CAMERA_HISTORY_INFO` payload[5] increments per shot | ✅ Confirmed incrementing in live probe (`84 -> 102` over 120 s with shots) | `(00,02)` InfoType 5 |
+| Print/transfer counters | ✅ `PRINT_HISTORY_INFO` readable | ✅ Fields readable (`transfers=60`, `prints=16`); increment trigger still under test | `(00,02)` InfoType 3 |
+| Camera settings registers (0x0B–0x1B) | ✅ Startup sweep mapped further: `0x0B` flash, `0x0C` film style, `0x13` film effect, `0x14` lens effect, `0x16` exposure candidate | ❌ Direct reads/writes still not confirmed on FI019 | `(80,11)` read/write |
 | `DEVICE_INFO` strings 0x03/0x04/0x05 | ✅ Firmware version strings (main / sub / BLE) | ❓ Unknown | `(00,01)` InfoType 3–5 |
 | Secondary GATT service (`0x6387…`) | ❓ Unknown | ❓ Unknown | possibly OTA / config |
 | Gen 3 Cinema (Mini Evo Cinema) | — | — | Not in possession; assumed same Link protocol |
+
+### Gen 1 vs Gen 2 (current project state)
+
+| Capability | Gen 1 FI019 | Gen 2 FI028 |
+|---|---|---|
+| Print `(10,xx)` | ✅ Working | ✅ Working |
+| Status/model/battery/photos `(00,01/02)` | ✅ Working | ✅ Working |
+| `InfoType 0x03` counters | ✅ Readable (probe-confirmed) | ✅ Readable |
+| `InfoType 0x05` shot counter | ✅ Readable (probe-confirmed) | ✅ Used live |
+| Live view `(82,00/01/02)` | ✅ Working, warm-up tolerant | ✅ Stable |
+| `82` picture receive flow `(82,10/20/21/22)` | ✅ Working after live-view stop; direct `(82,10)` during active live view still fails with `c0` | ✅ Working |
+| Share-button pull `(88,xx)` | ❌ Disconnects | ✅ Working |
+
+The practical split is now clear: FI028 has the full remote-shoot control path
+working in the repo app, while FI019 currently has working print/live view/`0x82`
+download but still lacks a known-good direct flash-write path and still rejects
+the `0x88` share-pull family.
 
 ## Two BLE profiles, two protocols (historical)
 
@@ -52,7 +70,7 @@ Notes:
 - Gen 1 BR/EDR address `88:B4:36:11:6F:D2` is a Fujifilm-OUI classic Bluetooth address — **not BLE**.
 - Model IDs from `DEVICE_INFO_SERVICE` op=(0x00,0x01) InfoType=1: FI019 (Mini Evo), FI028 (Evo Wide).
 - BLE device name suffix = serial number: `INSTAX-3332137670 (IOS)` → serial `3332137670`.
-- Gen 1 **requires passkey/PIN pairing** after firmware update. Call `pair()` before subscribing.
+- Gen 1 may require a one-time Windows passkey/PIN pairing step after firmware or bond resets; current maintained app flow does not treat `client.pair()` as a required per-session step.
 - Gen 3 (Mini Evo Cinema) is not in our possession; assumed to use the same Link protocol.
 
 ## Shared GATT service (all models, both profiles)

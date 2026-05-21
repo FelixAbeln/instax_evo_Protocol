@@ -5,10 +5,11 @@
 The phone-initiated, share-button-triggered pull protocol. Used to drain every
 photo printed by the camera into the phone's gallery.
 
-This is **distinct from** the `(0x82,10/20/21/22)` post-shutter auto-transfer
-(see [auto-transfer.md](auto-transfer.md)) — that path is for shots taken via
-the phone's remote shutter during live view; `(0x88,xx)` is for share-button
-pulls of already-printed photos.
+This is **distinct from** the `(0x82,10/20/21/22)` picture receive flow
+(see [auto-transfer.md](auto-transfer.md)). On FI028 that `0x82` path is the
+post-shutter auto-transfer flow; on FI019 the same family also works through
+the app-style "Download Photo" path after live view is stopped. `(0x88,xx)` is
+the separate share-button queue pull mechanism.
 
 Confirmed on Gen 2 (Evo Wide FI028) from btsnoop captures 2026-05-17/18 and
 live Python/bleak runs.
@@ -183,7 +184,8 @@ All 4 images drained in a single BLE connection using the polling loop:
 | 3 | 235,414 | 25 (24×9749 + 1438) | ~16 s | 2026-03-24 16:17:35 (duplicate) |
 | 4 | 210,761 | 22 (21×9749 + 6032) | ~12 s | 2026-01-24 20:45:20 |
 
-BLE MTU = 247 (bonded; `pair()` required before `start_notify()`). Per-image
+BLE MTU = 247 on bonded sessions. The maintained app flow does not rely on an
+explicit `pair()` call as part of `(0x88,xx)` transfer itself. Per-image
 BLE time: ~12–19 s. Camera SD read is the bottleneck (~0.7 s/chunk).
 
 ## Gen 1 status — `(0x88,xx)` not usable

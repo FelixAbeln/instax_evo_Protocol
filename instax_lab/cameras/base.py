@@ -55,7 +55,7 @@ class BaseCameraPath:
         Protocol (confirmed on FI028, 2026-05-17):
           (88,00) start   →  5-byte ACK
           (88,01) meta    →  34-byte metadata (total_size, chunk_sz, timestamp…)
-          (88,02) × N    →  one IOS-Link frame per chunk [img_idx:4][seq:1][JPEG…]
+          (88,02) × N    →  one Link-protocol frame per chunk [img_idx:4][seq:1][JPEG…]
           (88,03) end     →  1-byte status
           (88,05) done    →  1-byte status
 

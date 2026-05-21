@@ -2,9 +2,22 @@
 
 ← [Wiki index](README.md)
 
-When the user takes a photo via remote shutter (phone app shutter button during
-live view), the camera automatically encodes the JPEG and makes it available
-for transfer via the `(0x82,0x10/0x20/0x21/0x22)` opcode family.
+The `(0x82,0x10/0x20/0x21/0x22)` family is the app's picture-receive path.
+What it does depends on camera state.
+
+On FI028, this is the confirmed post-shutter auto-transfer path: the camera
+closes live view with a spontaneous `(0x82,0x02)`, then the phone runs the
+`(0x82,0x10/0x20/0x21/0x22)` flow.
+
+On FI019, behavior is state-dependent:
+- sending `(0x82,0x10)` while live view is still open returned
+    `(0x82,0x10) [0xc0]` and no image became ready;
+- following the app-style sequence "open live view -> pull frames -> stop live
+    view -> send `(0x82,0x10/0x20/0x21/0x22)`" returned a JPEG successfully.
+
+So `(0x82,0x10)` is not a generic live-view shutter opcode on FI019, but the
+full `0x82` receive flow is a known-good picture-download path once live view
+has been stopped.
 
 This is **distinct from the `(0x88,xx)` share-button pull** described in
 [image-pull.md](image-pull.md). Both protocols use phone-initiated chunk
@@ -17,7 +30,7 @@ at 9 749 B/chunk.
 ## Transfer sequence
 
 ```
-# ── Trigger (immediately after LIVE_VIEW_END) ────────────────────────────
+# ── Query / begin receive path ───────────────────────────────────────────
 phone → cam: op=(0x82,0x10)  payload=[0x00]     # IMG_HIST_QUERY
 cam → phone: op=(0x82,0x10)  payload=[0x00]     # ACK
 
@@ -104,15 +117,35 @@ async def receive_82_transfer(backend):
     return bytes(jpeg) if len(jpeg) > 100 else None
 ```
 
-## When to trigger
+## FI028 vs FI019 trigger conditions
 
-Triggered by a spontaneous `(0x82,02)` close from the camera during live view
-(shutter fired). Send `IMG_HIST_QUERY` **immediately after acknowledging the
-`(0x82,02)` close** and before reopening the live view session with
-`(0x82,00)`. The camera takes ~4–5 s to encode the JPEG after the shutter
-fires, so poll `(0x82,20)` at ~500 ms intervals. If the camera has no image
-ready it keeps returning `[0x02]` — use a timeout (e.g. 30 s / 60 polls) to
-give up gracefully.
+FI028:
+Send `IMG_HIST_QUERY` immediately after acknowledging the spontaneous
+`(0x82,0x02)` close from the camera during live view. That is the confirmed
+post-shutter auto-transfer path.
 
-This protocol was only observed after **remote shutter captures**. Whether it
-is triggered by the Share button (like `(0x88,xx)`) is not yet confirmed.
+FI019:
+A direct probe that opened live view and then sent `(0x82,0x10) 00` received
+`(0x82,0x10) [0xc0]`, never saw a spontaneous `(0x82,0x02)`, and timed out on
+`(0x82,0x20)`.
+
+But the app-mirrored sequence below did return a JPEG on FI019:
+
+1. open live view with `(0x82,0x00)`
+2. pull a few frames with `(0x82,0x01)`
+3. stop live view with `(0x82,0x02)`
+4. send `(0x82,0x10)`
+5. poll `(0x82,0x20)` until READY
+6. drain chunks with `(0x82,0x21)`
+7. close with `(0x82,0x22)`
+
+In a live FI019 run on 2026-05-21 this produced:
+- `(0x82,0x10) [0x00]`
+- three not-ready `(0x82,0x20) [0x02]` polls
+- READY with `total=28795`, `chunk=1808`
+- 16 chunk transfers
+- `(0x82,0x22) [0x00]`
+
+This is the current Gen 1 source of truth in this repo: the `0x82` family works
+as a known-good picture receive flow after live view has been stopped, while
+flash `(0x80,0x11)` still does not ACK.

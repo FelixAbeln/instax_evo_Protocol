@@ -168,3 +168,96 @@ machine:
 
 The `0xA8` status format and Type C/D device-ID handshake have no direct
 Link-protocol equivalent and may be specific to the Android stack.
+
+### New hypothesis from bugreport 2026-05-20 (FI019)
+
+From `FS/data/log/bt/btsnoop_hci.log.last` around the settings/live-view
+window (~3547.7 s), we observed a stable mini-pattern that looks register-like:
+
+- `.. 00 06 [reg] 05 01 [value] ..`  (read/readback form)
+- `.. 00 07 [reg] 05 02 [value] ..`  (write form)
+
+Observed sequence (write handle `0x0020`, notify `0x001d`):
+
+- `d38e 0006 8c 05 01 08 80 00`  (phone write)
+- `d3ce 0006 8c 05 01 08 80 00`  (camera notify, same value)
+- `d3cf 0007 8d 05 02 05 ff 70 00`  (phone write)
+- `d40f 0006 8d 05 01 05 8c 00`  (camera notify readback = `0x05`)
+- `d410 0006 8e 05 01 0d 87 00`  (phone read)
+- `d450 0007 8e 05 02 0d 01 85 00`  (camera notify write/ack form)
+
+Interpretation (low confidence):
+
+- `0x0006` behaves like READ / readback.
+- `0x0007` behaves like WRITE.
+- Candidate register IDs active in this window: `0x8c`, `0x8d`, `0x8e`.
+- `reg=0x8d` is a plausible flash-related candidate because it appears in a
+  settings-heavy interval and is explicitly written then read back.
+
+This does **not** map directly onto Link-profile `(0x80,0x11)` register writes,
+but it suggests the Android profile has its own register bank with read/write
+semantics that can still be mined for state mapping.
+
+### Automated candidate sweep findings (2026-05-20)
+
+Using an earlier local sweep runner, we captured a no-human flow that:
+
+1. sends a candidate raw payload,
+2. runs the full image receive protocol `(82,10/20/21/22)`,
+3. saves one JPEG per candidate under `captures/flash_sweep/`.
+
+Profiles currently encoded in the sweep:
+
+- `raw97_triplet`: `97 52`, `97 53`, `97 54` full payload writes
+- `raw58`: `58 00` .. `58 05` (with `58 05 02 00` payload form)
+
+Observed behavior from interactive testing (operator-confirmed):
+
+- In the first (`raw97_triplet`) flow, candidates 2 and 3 were reported as
+  flash-active; one candidate behaved like auto/no-flash.
+- In the second (`raw58`) flow, all six candidates were reported as flash-active.
+  In a focused phone-light run, candidate 5 (`58_04`) flashed clearly and
+  candidate 6 (`58_05`) also flashed but appeared shorter/weaker than
+  candidate 5.
+- In a later focused rerun (`--only 58_04 58_05`), operator reported neither
+  command flashed.
+
+Important caveat:
+
+- Mean-luma ranking from downloaded JPEGs is not yet stable across reruns, so
+  image brightness alone is not a reliable classifier of flash mode state.
+- There is currently no evidence that these payloads expose a flash-brightness
+  level control. Current working assumption is a discrete mode selector
+  (OFF/AUTO/ON-like behavior), not intensity tuning.
+- The conflicting reruns indicate behavior is likely gated by scene/session
+  state (AUTO-style decision logic), so single-pass visual outcomes should not
+  be treated as final command semantics.
+- Current status: we have a reproducible command family that affects capture
+  behavior, but field-level semantics (exact OFF/AUTO/ON mapping per payload)
+  remain provisional.
+
+### Byte-level deltas in latest final-picture window (2026-05-20)
+
+From `btsnoop_hci.log.last` window `3546.70s..3550.10s`, the strongest evolving family is
+`0x97`:
+
+- Write chain observed: `97 52` -> `97 53` -> `97 54` -> ... -> `97 5b` -> `97 9c` -> `97 dd` -> `97 de`.
+- In the original 3-command block:
+  - `97 52`: `97 52 00 02 11 01 04 88 b3 13 03 a4 20 01 01 01 01 01 03 b0 f8 00`
+  - `97 53`: `97 53 00 02 11 01 04 89 b3 13 03 a5 20 01 01 01 01 01 03 8c f7 00`
+  - `97 54`: `97 54 00 02 11 01 04 8a b3 13 03 a6 20 01 01 01 05 01 c9 09 20 00`
+- Byte changes from `97 52` -> `97 53`:
+  - byte1 `52->53`, byte7 `88->89`, byte11 `a4->a5`, tail bytes `b0 f8->8c f7`.
+- Byte changes from `97 53` -> `97 54`:
+  - byte1 `53->54`, byte7 `89->8a`, byte11 `a5->a6`, plus a structural switch in
+    the back half (`... 01 01 03 8c f7 ...` -> `... 05 01 c9 09 20 ...`).
+
+Related register-like traffic appears immediately adjacent:
+
+- `d3 8e 00 06 8c 05 01 08 80 00`
+- `d3 cf 00 07 8d 05 02 05 ff 70 00`
+- `d4 10 00 06 8e 05 01 0d 87 00`
+
+with matching notify-side read/write forms (`...00 06...` read/readback,
+`...00 07...` write/ack), reinforcing that this area is a state-machine/config
+phase tied to the same capture window.

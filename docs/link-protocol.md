@@ -73,11 +73,11 @@ cross-referenced with live Gen 2 Evo Wide HCI captures.
 | 0x80 | 0x01 | `CAMERA_SETTINGS_GET` | Evo-specific camera setting read |
 | 0x80 | 0x10 | *(Evo-specific session register)* | **Required for live HIST tracking.** P→C `[0x00]`; C→P 10B `[00 00 02 00 03 00 00 00 00 00]`. See [session-init.md](session-init.md). |
 | 0x80 | 0x11 | *(register read/write)* | See [registers.md](registers.md). |
-| 0x80 | 0x15 | `LIVE_VIEW_PREPARE` | Sent before `(0x82,0x00)`. Phone payload = 17×0x00. See [live-view.md](live-view.md). |
+| 0x80 | 0x15 | `LIVE_VIEW_PREPARE` | Seen in queue/history image flows and some older live-view sessions. Do not treat it as a blanket prerequisite for current live-view control. See [live-view.md](live-view.md). |
 | 0x82 | 0x00 | `LIVE_VIEW_START` | Open live-view session, slot index byte. |
 | 0x82 | 0x01 | `LIVE_VIEW_FRAME` | Pull one JPEG frame. See [live-view.md](live-view.md). |
 | 0x82 | 0x02 | `LIVE_VIEW_END` | Close live-view session. |
-| 0x82 | 0x10 | `IMG_HIST_QUERY` | Start post-shutter auto-transfer. See [auto-transfer.md](auto-transfer.md). |
+| 0x82 | 0x10 | `IMG_HIST_QUERY` | Begin the `0x82` picture receive flow. On FI028 this is the post-shutter transfer query. On FI019 it also works after the app-style live-view stop path, but not as a standalone command during active live view. See [auto-transfer.md](auto-transfer.md). |
 | 0x82 | 0x20 | `IMG_HIST_POLL` | Poll until camera-encoded JPEG is ready. |
 | 0x82 | 0x21 | `IMG_HIST_CHUNK` | Request / receive one chunk. |
 | 0x82 | 0x22 | `IMG_HIST_END` | Close auto-transfer session. |
@@ -124,7 +124,7 @@ Response payload format: `[0x00][InfoType_echo][data…]`
 | 0x00 | `IMAGE_SUPPORT_INFO` | `[width: 2B BE][height: 2B BE][…]`. Always query first; use this for image prep. See [film dimensions](#film-dimensions-by-model--print-mode). |
 | 0x01 | `BATTERY_INFO` | `[battery_state][battery_pct]`. State: 0=critical, 1=low, 2=medium, 3=high, 4=full. |
 | 0x02 | `PRINTER_FUNCTION_INFO` | `[status_byte][0x00][shots_in_pack: 2B]…`. `photos_left = status_byte & 0x0F`, `charging = bool(status_byte & 0x80)`. |
-| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: field_a][uint32 BE: field_b]`. Does **not** directly report total shots or prints — use [HIST `(84,xx)`](history-log.md) for the app's Usage History counts. |
+| 0x03 | `PRINT_HISTORY_INFO` | `[uint32 BE: transfer_count][uint32 BE: print_count]` in current FI019/FI028 probes. These fields are readable and useful runtime counters, but they are **not** the same as [HIST `(84,xx)`](history-log.md) Usage History totals. |
 | 0x04 | `CAMERA_FUNCTION_INFO` | 16B data. `data[2]` (= full payload[4]) = `0x01` when camera is **transfer-ready**; `0x00` at rest. Raised by camera ~700 ms after the phone sends `(0x85,0x01)`. |
 | 0x05 | `CAMERA_HISTORY_INFO` | 6B response `[0x00][0x05][0x00][0x00][0x00][counter]`. **Counter at pay[5]** increments for every shot fired (including shots taken while BLE is connected to a third-party script). |
 

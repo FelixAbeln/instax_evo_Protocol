@@ -8,11 +8,12 @@ Key differences from the Wide Evo (FI028):
     when the user presses the Share button, but we must NOT act on it with
     (88,xx).
 
-  * Live view (82,xx) IS NOT supported — confirmed it possbile in testing but not gotten it to work fully yet.  The camera does send some response frames to (82,00) but they don't appear to contain valid image data; more investigation needed.
-    FA:AB:BC:11:6F:D2 (FI019) on 2026-05-17.
+  * Live view (82,xx) is supported, but Gen 1 may need a short warm-up
+    window after session open where early pulls return short non-JPEG payloads
+    (for example payload [0x02]) before full JPEG frames begin.
 
-  * Print (10,xx) is expected to work (same IOS Link framing) but has not
-    yet been tested on hardware.
+  * Print (10,xx) works on the same Link framing as FI028 and is treated as
+    supported in the maintained app/docs.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ class FI019Path(BaseCameraPath):
     # ── feature flags ─────────────────────────────────────────────────────────
     supports_image_pull:  bool = False  # (88,xx) causes BLE disconnect — SKIP
     supports_image_print: bool = True   # (10,xx)
-    supports_liveview:    bool = False   # (82,xx)
+    supports_liveview:    bool = True   # (82,xx), with warm-up tolerance
 
     async def pull_one(self, backend: Any) -> bool:
         """Image pull is not supported on FI019.

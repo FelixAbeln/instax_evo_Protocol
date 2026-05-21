@@ -22,4 +22,4 @@ if (Test-Path $venvPython) {
     } else {
         python -m instax_lab $Address
     }
-}ad 
+}
