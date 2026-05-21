@@ -2,20 +2,6 @@
 
 ← [Wiki index](README.md)
 
-## Remote shutter — open
-
-**Goal:** Trigger the camera's shutter remotely over BLE.
-
-Now that `(0x82,xx)` is confirmed as live view, the remote shutter is the next
-thing to reverse-engineer. Candidates:
-
-- `CAMERA_SETTINGS` (op1=0x80, op2=0x00) — write a "capture" setting
-- `CAMERA_SETTINGS_GET` (0x80,0x01) — poll for shutter-ready state
-- An undiscovered opcode (capture a BLE session during app remote-shutter use)
-
-**What we need:** Capture an HCI log while using the Instax app's
-remote-shutter feature and look for the trigger opcode.
-
 ## Local print log
 
 Every `evo-print` run appends a record to `captures/print-log.jsonl`:
@@ -75,13 +61,6 @@ The recurrence of `0x32` across three independent payloads strongly suggests
 it is a single firmware-side counter being surfaced through multiple opcodes,
 but the specific quantity is still unconfirmed.
 
-### Remote shutter (Gen 2)
-
-Still no opcode identified to trigger the FI028 shutter remotely while live
-view is active. Existing `(0x82,xx)` live-view pulls do not cause an exposure.
-Test plan unchanged from the [Remote shutter](#remote-shutter--open) section
-above: capture an HCI log of the Instax app's remote-shutter feature.
-
 ### FI019 direct flash write `(0x80,0x11 reg 0x0B)`
 
 Confirmed working on FI028 (see [registers.md](registers.md)); on FI019 the
@@ -100,10 +79,3 @@ opcode.
   — Android bugreport HCI capture guide
 - [jpwsutton/instax_api](https://github.com/jpwsutton/instax_api) — older
   Wi-Fi-based Instax protocol
-
-## Legacy archive
-
-The original 2 600-line monolithic protocol notebook is preserved at
-[protocol-legacy.md](protocol-legacy.md). As of 2026-05-19 every concrete
-piece of information it contained has been ported into the topical wiki pages
-— the legacy file is now redundant and safe to delete.

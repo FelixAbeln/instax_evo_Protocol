@@ -336,7 +336,7 @@ def hist_shot_count(hist_body: bytes, film: int, lens: int) -> int:
     hist_body is the 1628-byte payload (record_data minus the 8B date prefix).
     Indexed as rec[film-1][lens_byte] where lens_byte is the odd byte position
     within the 44-byte record. The per-film byte mapping varies (see the
-    legacy file for full tables); a simple uniform encoding is:
+    per-film map tables in this page); a simple uniform encoding is:
     """
     flat = (film - 1) * 10 + (lens - 1)
     rec_num = flat // 22
@@ -456,8 +456,8 @@ and non-destructive.
 > 3. The "image total" shown in the UI is the **sum of the local totals
 >    table**, never a value read directly from the camera.
 >
-> See [protocol-legacy.md §HIST summary](protocol-legacy.md) for the
-> original wire-trace evidence (2026-05-19, shot #151).
+> Wire-trace evidence for this pattern is now summarized directly in this page
+> under "Runtime polling for live counters" and the per-film mapping sections.
 
 The app's `BleWorker._poll_loop` ([instax_lab/gui.py](../instax_lab/gui.py))
 uses exactly this pattern: it polls `(0x00,0x02,[0x04])` for the
