@@ -2,21 +2,6 @@
 
 ← [Wiki index](README.md)
 
-## Known gaps — commands not yet identified
-
-### Print history / transferred-images gallery — RESOLVED
-
-The camera automatically registers every ejected print in its internal history
-(up to 50 entries, stored in camera flash) regardless of which BLE client
-triggered the print. Confirmed 2026-05-17: prints sent via our tool are visible
-in the on-camera print history without any additional commands.
-
-The Instax app's "TRANSFERRED IMAGES" gallery is populated by a separate
-user-initiated flow: the user selects "PRINTED IMAGE TRANSFER" from the
-camera's physical menu, which causes the camera to push the stored JPEG back
-over BLE to the app. That read-back transfer is not part of the print
-pipeline.
-
 ## Remote shutter — open
 
 **Goal:** Trigger the camera's shutter remotely over BLE.
@@ -60,41 +45,16 @@ Every `evo-print` run appends a record to `captures/print-log.jsonl`:
 `transferred=true, printed=false` means `--enable-print` was not passed — image
 was sent but film was not ejected (safe test mode).
 
-## Hypotheses & open questions
+## Open hypotheses
 
-This section tracks theories and ideas that are plausible but not yet
-confirmed.
-
-### H1 — Why Mini Evo (Gen 1) does not respond to `(0x88,00)`
-
-**Observed:** Connected to Mini Evo, MTU=247, subscribed OK. Sent `(0x88,00)`
-— camera sent nothing back in 20 s.
-
-**Theory A (most likely):** The image_receive script never polled
-`CAMERA_FUNCTION_INFO` first. The camera may require seeing the polling loop
-(simulating the real app's keepalive) before it recognises the session as
-legitimate. → *Test: add `(0x00,00)` hello + `(0x00,02)` InfoType=0x04 polling
-loop before `(0x88,00)`.*
-
-**Theory B:** Gen 1 (FI019) and Gen 2 (FI028) have different opcodes for image
-transfer. Gen 2 uses `0x88`; Gen 1 may use `0x86` or another family that was
-not in the available btsnoop captures. → *Test: capture an HCI log of the
-Instax app doing an image transfer from the Mini Evo.*
-
-**Theory C:** The transfer-ready flag is in a different InfoType on Gen 1.
-→ *Test: poll all (0x00,02) InfoTypes while pressing Share; compare payload
-snapshots.*
-
-**Theory D:** Mini Evo firmware update (2026) changed the higher-level session
-state around transfer support. Older pairing-specific suspicion is no longer
-the default explanation.
+Things still plausible but not yet confirmed.
 
 ### H2 — Meaning of `CAMERA_FUNCTION_INFO` byte[0] and byte[1]
 
 Normal Wide Evo value: `03 50 00 00 00 00 00 00 00 05 04 01 00 00 00 00`
 Keepalive value (different state): `02 32 00 00 00 00 00 00 00 00 00 00 00 00 00 00`
 
-- **byte[1] = 0x32 = 50**: also appears in historical `0x80,0x15` response
+- **byte[1] = 0x32 = 50**: also appears in historical `(0x80,0x15)` response
   payloads on Wide Evo. Could be a capability register, print count, or mode
   identifier.
 - **byte[0] = 0x02 vs 0x03**: may encode a camera mode or state-machine state
@@ -102,31 +62,34 @@ Keepalive value (different state): `02 32 00 00 00 00 00 00 00 00 00 00 00 00 00
 - **byte[10] = 0x04, byte[11] = 0x01**: stable across samples. Likely
   capability flags.
 
-### H3 — Correct polling loop before `(0x88,00)` (Gen 1)
-
-The btsnoop shows the Wide Evo app sends a full session handshake before
-polling begins: `(0x00,00)` hello → device info queries → `(0x00,02)`
-InfoType=0x04/05/02/03/01 rotation. Our current scripts skip the handshake
-and go straight to `(0x88,00)`. Gen 1 may require the handshake to initialise
-internal session state.
-
-### H4 — `(0x88,02)` chunk ACK vs data: two frames or one?
-
-The btsnoop appeared to show two `(0x88,02)` cam→phone responses per request
-(a 4B ACK then the large data frame). Live testing confirmed it is actually
-**one frame**; the `[img_idx:4]` prefix was being misparsed as a separate ACK.
-See [image-pull.md](image-pull.md).
-
 ### H5 — Metadata byte[29] = 0x32
 
 `(0x88,01)` metadata byte[29] = 0x32 = 50. Also appears in
-`CAMERA_FUNCTION_INFO` data[1] and in historical `0x80,0x15` response byte[8] on
+`CAMERA_FUNCTION_INFO` data[1] and in historical `(0x80,0x15)` response byte[8] on
 Wide Evo. Possible meanings:
 - Total digital transfers made by this camera (lifetime counter)
 - A capability/mode register value that is coincidentally the same
 - Camera print count (but `CAMERA_HISTORY_INFO` shows different value)
 
-## References
+The recurrence of `0x32` across three independent payloads strongly suggests
+it is a single firmware-side counter being surfaced through multiple opcodes,
+but the specific quantity is still unconfirmed.
+
+### Remote shutter (Gen 2)
+
+Still no opcode identified to trigger the FI028 shutter remotely while live
+view is active. Existing `(0x82,xx)` live-view pulls do not cause an exposure.
+Test plan unchanged from the [Remote shutter](#remote-shutter--open) section
+above: capture an HCI log of the Instax app's remote-shutter feature.
+
+### FI019 direct flash write `(0x80,0x11 reg 0x0B)`
+
+Confirmed working on FI028 (see [registers.md](registers.md)); on FI019 the
+write completes but no reliable ACK is observed and on-device flash state does
+not change consistently. Open whether Gen 1 expects a different `param` byte,
+a different register, or requires the change be staged through a higher-level
+opcode.
+
 
 - [javl/InstaxBLE](https://github.com/javl/InstaxBLE) — Python library for
   Instax Link printers (Mini/Square/Wide Link) via Link BLE profile. Protocol
