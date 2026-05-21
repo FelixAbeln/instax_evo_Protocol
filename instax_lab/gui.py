@@ -728,9 +728,18 @@ class CameraBackend:
         # path's display_name alongside the raw model string.
         model_id    = info.get("model", "")
         self._path  = get_path(model_id)
-        self._is_gen2_fi028 = (model_id.upper() == "FI028")
-        # Initialise the runtime flag from the path's static capability.
-        self._transfer_supported = self._path.supports_image_pull
+        model_u = model_id.upper()
+        self._is_gen2_fi028 = (model_u == "FI028")
+        # Initialise pull capability conservatively:
+        # - FI019: hard-disable (88,xx) to avoid camera disconnect.
+        # - Unknown/undetected model: disable auto-pull until identity is known.
+        # - Known mapped models: use path capability flag.
+        if model_u == "FI019":
+            self._transfer_supported = False
+        elif not model_u:
+            self._transfer_supported = False
+        else:
+            self._transfer_supported = self._path.supports_image_pull
 
         # Image dimensions (determines film format and chunk size)
         try:
@@ -833,6 +842,11 @@ class CameraBackend:
             f"Camera: {self._path.display_name}"
             f"  battery={bat}%  photos_left={pht}"
         )
+        if not model_u:
+            self._log(
+                "  ↳ Model ID not read — disabling auto image pull "
+                "(88,xx) for safety"
+            )
         if not self._path.supports_image_pull:
             self._log(
                 f"  ↳ Image pull (88,xx) disabled for {self._path.display_name}"

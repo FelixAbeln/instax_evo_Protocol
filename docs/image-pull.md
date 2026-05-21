@@ -74,8 +74,19 @@ the queue is empty.
 ## Queue behaviour
 
 The camera maintains an internal queue of **every printed photo** pending
-transfer. Each successful `(0x88,05)` dequeues one image. There is **no queue
-depth field** exposed in `CAMERA_FUNCTION_INFO`:
+transfer. Each successful `(0x88,05)` dequeues one image.
+
+Queue-depth visibility is currently model-dependent:
+
+- **FI028 (Gen 2):** no reliable queue-depth field has been confirmed in
+  `CAMERA_FUNCTION_INFO`; treat `payload[4]` as readiness only.
+- **FI019 (Gen 1):** live probes show `CAMERA_FUNCTION_INFO payload[5]` tracks
+  a count-like value that increases when Share-queued images increase (example
+  observation: `... 01 02 ...` -> `... 01 03 ...` after another shared image).
+  This is useful as a poll signal even though `(0x88,xx)` itself is unsupported
+  on FI019.
+
+Other queue signals:
 
 - `img_count` in `(0x88,01)` metadata — always `1` regardless of queue depth.
 - `(0x88,00)` ack `[00 00 00 00 00]` — all-zero when ready;
@@ -86,9 +97,9 @@ depth field** exposed in `CAMERA_FUNCTION_INFO`:
 **Drain algorithm:** loop back to polling after each successful pull; exit when
 `flag == 0x00`.
 
-**Alternative queue depth check:** Use the `(0x84,xx)` HIST sequence on connect
-to get the exact pending count before any flag appears — the official app does
-this on every connect (see [history-log.md](history-log.md)).
+**Authoritative queue depth check:** Use `(0x84,0x09)` count (`bytes[10:14]`)
+for exact pending-entry count. The official app does this on connect in its
+queue-transfer flow (see [queue-transfer.md](queue-transfer.md)).
 
 ## `(0x88,xx)` transfer sequence
 

@@ -39,6 +39,7 @@ available for transfer:
 | Signal | How to read | Meaning when set |
 |---|---|---|
 | `CAMERA_FUNCTION_INFO[4]` (= response byte 4 of `(0x00,0x02,[0x04])`) | Status poll | `0x01` → camera is in transfer-ready mode. Raised by the camera ~700 ms after the user presses QUE *or* the phone sends `(0x85,0x01)` for a single image. |
+| `CAMERA_FUNCTION_INFO[5]` (FI019 observed) | Status poll | On Mini Evo probes, behaves like a count-like byte that increments with additional Share-queued images. Treat as heuristic only; `(0x84,0x09)` remains authoritative for exact count. |
 | `(0x85,0x00)` transfer state | Send packet, parse 5 B reply | 5-byte state vector. Reply seen `00 00 ff 00 00` when no transfer is in progress; values change once QUE is pressed (see [image-pull.md](image-pull.md)). |
 | `(0x84,0x09)` with `idx=0` | One-shot query | `bytes[10:14]` (4 B BE) = number of entries currently in the queue. `0` if empty. |
 

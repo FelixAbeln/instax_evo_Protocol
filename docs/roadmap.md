@@ -57,6 +57,36 @@ Done criteria:
 - Repro script that reads favorites, writes one change, reconnects, then reads
   back the same persisted value.
 
+### H7 — Decode Gen 2 image metadata payloads
+
+Working assumption: FI028 returns stable metadata blocks during image-transfer
+flows, but field-level meaning is only partially decoded in this repo.
+
+Priority targets:
+- `(0x88,0x01)` 34-byte metadata payload in share-button pull.
+- `(0x82,0x20)` READY payload fields beyond `total_size` and `chunk_size`.
+- Any repeated counters/timestamps that correlate with shot index or camera state.
+
+What we need to confirm:
+- Exact byte layout and endianess for each metadata field.
+- Which fields are transport-only vs semantic (timestamp, queue/order, profile,
+  transfer/session counters).
+- Cross-flow consistency between `(0x88,0x01)` and `(0x82,0x20/0x21)` metadata.
+
+Capture plan:
+1. Collect FI028 transfers for at least 10 images with varied conditions
+   (flash on/off, different effects, manual download vs shutter-triggered).
+2. For each image, store raw metadata bytes and known ground-truth labels
+   (time taken, mode, shot order, resulting JPEG size).
+3. Run byte-diff/correlation to map candidate fields, then verify by predicting
+   labels on unseen captures.
+
+Done criteria:
+- A documented field map in docs with offsets, sizes, and confidence level.
+- Decoder code that outputs structured metadata for FI028 transfers.
+- At least one independent validation run where decoded fields match observed
+  capture conditions.
+
 ### FI019 direct flash write `(0x80,0x11 reg 0x0B)`
 
 Confirmed working on FI028 (see [registers.md](registers.md)); on FI019 the

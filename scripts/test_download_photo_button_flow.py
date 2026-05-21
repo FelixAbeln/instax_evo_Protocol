@@ -59,6 +59,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--flash-mode", choices=sorted(FLASH_VALUES), help="Send the app's flash write before the download flow")
     p.add_argument("--out-dir", type=Path, default=Path("captures/image_transfer"), help="Directory for saved JPEG")
     p.add_argument("--trace-out", type=Path, help="Write every TX/RX message as hex lines for byte-by-byte comparison")
+    p.add_argument(
+        "--direct-chunk-probe",
+        action="store_true",
+        help="Skip 82,10/82,20 and send 82,21 directly to probe camera response",
+    )
+    p.add_argument(
+        "--direct-chunk-index",
+        type=int,
+        default=0,
+        help="Chunk index for --direct-chunk-probe (default: 0)",
+    )
     return p.parse_args()
 
 
@@ -292,6 +303,28 @@ async def run_download_photo_flow(
     return data[soi:]
 
 
+async def run_direct_chunk_probe(
+    cli: LinkClient,
+    timeout: float,
+    chunk_index: int,
+) -> tuple[bool, bytes | None]:
+    await cli.flush()
+    payload = chunk_index.to_bytes(4, "big", signed=False)
+    print(f"direct-chunk probe: send (82,21) idx={chunk_index} payload={payload.hex()}")
+    await cli.write(0x82, 0x21, payload)
+
+    r = await recv_any(cli, timeout)
+    if r is None:
+        print("direct-chunk probe: timeout waiting for response")
+        return False, None
+
+    op1, op2, p = r
+    print(f"direct-chunk probe: rx op=({op1:02x},{op2:02x}) len={len(p)} payload={p.hex()}")
+    if op1 == 0x82 and op2 == 0x21:
+        return True, p
+    return False, p
+
+
 async def resume_liveview_after_transfer(
     cli: LinkClient,
     timeout: float,
@@ -391,20 +424,34 @@ async def main_async(args: argparse.Namespace) -> int:
         elif args.open_liveview_first:
             print("download-photo flow: keep live-view polling state into 82 transfer (official-style)")
 
-        jpeg = await run_download_photo_flow(
-            cli,
-            timeout=args.timeout,
-            poll_count=args.poll_count,
-            poll_delay=args.poll_delay,
-            chunk_timeout=args.chunk_timeout,
-        )
-        if not jpeg:
-            return 3
+        if args.direct_chunk_probe:
+            ok, payload = await run_direct_chunk_probe(
+                cli,
+                timeout=args.timeout,
+                chunk_index=args.direct_chunk_index,
+            )
+            if not ok:
+                return 4
+            if payload is not None and len(payload) > 8 and b"\xff\xd8" in payload:
+                ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                out_path = args.out_dir / f"direct_chunk_{ts}_{model or 'unknown'}.bin"
+                out_path.write_bytes(payload)
+                print(f"saved direct chunk payload {out_path} ({len(payload)} bytes)")
+        else:
+            jpeg = await run_download_photo_flow(
+                cli,
+                timeout=args.timeout,
+                poll_count=args.poll_count,
+                poll_delay=args.poll_delay,
+                chunk_timeout=args.chunk_timeout,
+            )
+            if not jpeg:
+                return 3
 
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        out_path = args.out_dir / f"download_photo_{ts}_{model or 'unknown'}.jpg"
-        out_path.write_bytes(jpeg)
-        print(f"saved {out_path} ({len(jpeg)} bytes)")
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            out_path = args.out_dir / f"download_photo_{ts}_{model or 'unknown'}.jpg"
+            out_path.write_bytes(jpeg)
+            print(f"saved {out_path} ({len(jpeg)} bytes)")
 
         if args.open_liveview_first:
             await resume_liveview_after_transfer(

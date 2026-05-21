@@ -169,6 +169,44 @@ machine:
 The `0xA8` status format and Type C/D device-ID handshake have no direct
 Link-protocol equivalent and may be specific to the Android stack.
 
+### Cross-profile image-transfer overlap (2026-05-21)
+
+Using local tooling on:
+
+- `captures/bugreport_2026-05-20/FS_data_log_bt_btsnoop_hci.log`
+- `captures/trace_compare/official_flash_to_transfer.trace`
+
+we can now detect transfer-like windows in the Android raw profile and compare
+their phase shape to Link `(0x82,10/20/21/22)`.
+
+Link baseline (`official_flash_to_transfer.trace`):
+
+- `(82,10)` x1 start
+- `(82,20)` x8 polls (7 not-ready + 1 ready)
+- `(82,21)` x23 chunk requests/responses
+- `(82,22)` x1 close
+
+Android raw FI019 burst windows (detected by
+`scripts/analyze_bugreport_trace.py`):
+
+- t=481.78s..484.16s: `W=10 N=10` `Wbig=1` `ACK+1=4` -> likely transfer phase
+- t=713.64s..716.09s: `W=11 N=12` `Wbig=2` `ACK+1=4` -> likely transfer phase
+- t=764.90s..770.10s: `W=16 N=14` `Wbig=2` `ACK+1=5` -> likely transfer phase
+
+Observed overlap (state-machine level):
+
+- both profiles show a short query/control prelude, then data-bearing frames,
+  then explicit phase transitions/finalization;
+- both profiles include periodic keepalive traffic (~25 s cadence in Android,
+  `5a 00 [seq]`), and transfer windows interrupt that idle cadence;
+- both expose photo-count/status primitives in their status families.
+
+Important constraint:
+
+- this is **not** a byte-level opcode mapping. Android raw families (`0x9x`,
+  `0xax`, etc.) do not directly equal Link opcodes (`0x82`, `0x84`, `0x88`),
+  but they appear to drive a similar high-level transfer state machine.
+
 ### New hypothesis from bugreport 2026-05-20 (FI019)
 
 From `FS/data/log/bt/btsnoop_hci.log.last` around the settings/live-view
