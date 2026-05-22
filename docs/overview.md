@@ -8,21 +8,21 @@ For raw capture excerpts behind topic claims, use [evidence.md](evidence.md).
 
 Status legend: `✅` confirmed working, `⚠️` partial/conditional, `⏳` not yet validated, `❌` currently failing.
 
-| Feature | Evo Wide FI028 (Gen 2) | Mini Evo FI019 (Gen 1) | Mini Evo Cinema Gen 3 | Opcode(s) |
+| Feature | Mini Evo FI019 (Gen 1) | Evo Wide FI028 (Gen 2) | Mini Evo Cinema Gen 3 | Opcode(s) |
 |---|---|---|---|---|
 | BLE connect / handshake | ✅ | ✅ | ⏳ Pending first hardware capture | `(00,00)` + `(00,01)` |
 | Status poll (battery, photos left, model) | ✅ | ✅ | ⏳ Pending first hardware capture | `(00,02)` |
-| Transfer-ready flag detection | ✅ | ⚠️ flag seen, transfer path still not usable | ⏳ Pending first hardware capture | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
+| Transfer-ready flag detection | ⚠️ flag seen, transfer path still not usable | ✅ | ⏳ Pending first hardware capture | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
 | **Print** (phone → camera → film ejected) | ✅ | ✅ | ⏳ Pending first hardware capture | `(80,xx)` print opcodes |
-| Flash control | ✅ Confirmed `reg 0x0B` mapping and working app flow (`0=Auto, 1=On, 2=Off`) | ❌ Direct FI019 probes and repo-app writes still unresponsive as of 2026-05-21 | ⏳ Pending first hardware capture | `(80,11)` reg_id=0x0b |
-| Live view (pull loop) | ✅ | ✅ Works with warm-up: early pulls may return short `0x02` payloads before JPEG frames begin | ⏳ Pending first hardware capture | `(82,00/01/02)` |
-| Auto-transfer / Download Photo `(82,10/20/21/22)` | ✅ seamless LV resume after shutter close | ⚠️ works only with app-style live-view stop; standalone `(82,10)` during active live view still returns `c0` | ⏳ Pending first hardware capture | `(82,10/20/21/22)` |
-| Share-button image pull | ✅ | ❌ Camera disconnects on `(88,00)` | ⏳ Pending first hardware capture | `(88,00…0b)` |
-| History log / shot & print counts | ✅ HIST buffer **fully mapped** — 37×44 diagonal-banded tally; all 10 films × 10 lens positions confirmed live 2026-05-19 | ⏳ Not tested | ⏳ Pending first hardware capture | `(84,xx)` `(00,02)` InfoType 5 |
-| Live shot counter (lifetime) | ✅ `CAMERA_HISTORY_INFO` payload[5] increments per shot | ✅ Confirmed incrementing in live probe (`84 -> 102` over 120 s with shots) | ⏳ Pending first hardware capture | `(00,02)` InfoType 5 |
-| Print/transfer counters | ✅ `PRINT_HISTORY_INFO` readable | ⚠️ Fields readable (`transfers=60`, `prints=16`); increment trigger still under test | ⏳ Pending first hardware capture | `(00,02)` InfoType 3 |
-| Camera settings registers (0x0B–0x1B) | ✅ Startup sweep mapped further: `0x0B` flash, `0x0C` film style, `0x13` film effect, `0x14` lens effect, `0x16` exposure candidate | ❌ Direct reads/writes still not confirmed on FI019 | ⏳ Pending first hardware capture | `(80,11)` read/write |
-| `DEVICE_INFO` strings 0x03/0x04/0x05 | ✅ Firmware version strings (main / sub / BLE) | ❓ Unknown | ⏳ Pending first hardware capture | `(00,01)` InfoType 3–5 |
+| Flash control | ❌ Direct FI019 probes and repo-app writes still unresponsive as of 2026-05-21 | ✅ Confirmed `reg 0x0B` mapping and working app flow (`0=Auto, 1=On, 2=Off`) | ⏳ Pending first hardware capture | `(80,11)` reg_id=0x0b |
+| Live view (pull loop) | ✅ Works with warm-up: early pulls may return short `0x02` payloads before JPEG frames begin | ✅ | ⏳ Pending first hardware capture | `(82,00/01/02)` |
+| Auto-transfer / Download Photo `(82,10/20/21/22)` | ⚠️ works only with app-style live-view stop; standalone `(82,10)` during active live view still returns `c0` | ✅ seamless LV resume after shutter close | ⏳ Pending first hardware capture | `(82,10/20/21/22)` |
+| Share-button image pull | ❌ Camera disconnects on `(88,00)` | ✅ | ⏳ Pending first hardware capture | `(88,00…0b)` |
+| History log / shot & print counts | ⏳ Not tested | ✅ HIST buffer **fully mapped** — 37×44 diagonal-banded tally; all 10 films × 10 lens positions confirmed live 2026-05-19 | ⏳ Pending first hardware capture | `(84,xx)` `(00,02)` InfoType 5 |
+| Live shot counter (lifetime) | ✅ Confirmed incrementing in live probe (`84 -> 102` over 120 s with shots) | ✅ `CAMERA_HISTORY_INFO` payload[5] increments per shot | ⏳ Pending first hardware capture | `(00,02)` InfoType 5 |
+| Print/transfer counters | ⚠️ Fields readable (`transfers=60`, `prints=16`); increment trigger still under test | ✅ `PRINT_HISTORY_INFO` readable | ⏳ Pending first hardware capture | `(00,02)` InfoType 3 |
+| Camera settings registers (0x0B–0x1B) | ❌ Direct reads/writes still not confirmed on FI019 | ✅ Startup sweep mapped further: `0x0B` flash, `0x0C` film style, `0x13` film effect, `0x14` lens effect, `0x16` exposure candidate | ⏳ Pending first hardware capture | `(80,11)` read/write |
+| `DEVICE_INFO` strings 0x03/0x04/0x05 | ❓ Unknown | ✅ Firmware version strings (main / sub / BLE) | ⏳ Pending first hardware capture | `(00,01)` InfoType 3–5 |
 | Secondary GATT service (`0x6387…`) | ❓ Unknown | ❓ Unknown | ❓ Unknown | possibly OTA / config |
 
 ### Gen 3 bring-up tracker (for Gen 4 handoff)
