@@ -181,5 +181,4 @@ cython_debug/
 .cursorindexingignore
 
 .captures\extracted
-/captures/extracted
-/captures
+/local_files/

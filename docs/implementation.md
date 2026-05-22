@@ -6,6 +6,9 @@ These quirks apply when using the [bleak](https://github.com/hbldh/bleak)
 library on Windows (WinRT BLE backend). They do **not** affect macOS/Linux
 CoreBluetooth/BlueZ.
 
+Supporting terminal/log excerpts are tracked in
+[implementation-evidence.md](implementation-evidence.md).
+
 ## MTU and bonding
 
 | MTU at connect | Meaning | Action required |
@@ -94,7 +97,7 @@ repeats. Sequence counter is global across BLE connection sessions.
 
 ## Local print log
 
-Every `evo-print` run appends a record to `captures/print-log.jsonl`:
+Every `evo-print` run appends a record to `captures/analysis/logs/print-log.jsonl`:
 
 ```json
 {

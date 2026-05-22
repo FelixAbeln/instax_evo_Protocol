@@ -1,0 +1,463 @@
+﻿
+======================================================================
+  btsnoop_hci.log  (10510 KB)
+======================================================================
+
+Total IOS-Link frames : 1016
+Live view frames (cam): 160
+SET_INFO exchanges    : 34
+IMG_HIST chunks recv  : 68
+PULL (0x88) chunks    : 0
+
+ÔöÇÔöÇÔöÇ Timeline (STATUS_POLL + LV_FRAME suppressed) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+
+       0.0 ms  PÔåÆC  DEVICE_PROBE  
+     260.5 ms  CÔåÆP  DEVICE_PROBE  <REDACTED_ID>
+     267.2 ms  PÔåÆC  DEVICE_INFO  00
+     321.2 ms  CÔåÆP  DEVICE_INFO  00000846554a4946494c4d
+     324.1 ms  PÔåÆC  DEVICE_INFO  01
+     380.6 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     383.4 ms  PÔåÆC  DEVICE_INFO  02
+     441.7 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     444.6 ms  PÔåÆC  DEVICE_INFO  03
+     505.5 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     507.0 ms  PÔåÆC  DEVICE_INFO  04
+     560.0 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     562.8 ms  PÔåÆC  DEVICE_INFO  05
+     620.0 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     624.5 ms  PÔåÆC  DEVICE_INFO  09
+     680.5 ms  CÔåÆP  DEVICE_INFO  000900
+     686.7 ms  PÔåÆC  DEVICE_INFO  0a
+     740.0 ms  CÔåÆP  DEVICE_INFO  000a00
+     805.0 ms  PÔåÆC  IMAGE_SUPPORT_INFO  
+     859.9 ms  CÔåÆP  IMAGE_SUPPORT_INFO  000000
+     861.8 ms  PÔåÆC  FUNC_INFO  00
+     932.6 ms  CÔåÆP  FUNC_INFO  <REDACTED_ID>
+    1137.5 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = AUTO
+    1159.7 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+    1163.9 ms  PÔåÆC  SET_INFO  [type_0x0c] payload=0c0000000000
+    1187.5 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000c00000000
+    1191.3 ms  PÔåÆC  SET_INFO  [type_0x13] payload=<REDACTED_ID>
+    1220.1 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1223.5 ms  PÔåÆC  SET_INFO  [type_0x14] payload=<REDACTED_ID>
+    1247.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1249.6 ms  PÔåÆC  SET_INFO  [type_0x15] payload=<REDACTED_ID>
+    1277.6 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1284.5 ms  PÔåÆC  SET_INFO  [UNKNOWN_16] payload=<REDACTED_ID>
+    1307.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1309.0 ms  PÔåÆC  SET_INFO  [FILTER?] payload=<REDACTED_ID>
+    1337.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1338.5 ms  PÔåÆC  SET_INFO  [UNKNOWN_18] payload=<REDACTED_ID>
+    1369.7 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1371.5 ms  PÔåÆC  SET_INFO  [UNKNOWN_19] payload=<REDACTED_ID>
+    1397.3 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1398.2 ms  PÔåÆC  SET_INFO  [UNKNOWN_1a] payload=1a0000000000
+    1427.5 ms  CÔåÆP  SET_INFO  [type_0x00] payload=001a00000000
+    1429.5 ms  PÔåÆC  SET_INFO  [UNKNOWN_1b] payload=1b0000000000
+    1457.6 ms  CÔåÆP  SET_INFO  [type_0x00] payload=001b01000000
+    1461.7 ms  PÔåÆC  HIST_INIT  
+    1487.4 ms  CÔåÆP  HIST_INIT  <REDACTED_ID>
+    1488.3 ms  PÔåÆC  HIST_SCHED  <REDACTED_ID>
+    1520.4 ms  CÔåÆP  HIST_SCHED  <REDACTED_ID>
+    1523.4 ms  PÔåÆC  HIST_COMMIT  
+    1547.4 ms  CÔåÆP  HIST_COMMIT  00
+    1550.4 ms  PÔåÆC  HIST_LIST_REQ  00
+    1579.3 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+    1583.9 ms  PÔåÆC  HIST_SLOT  00
+    1607.5 ms  CÔåÆP  HIST_SLOT  0000
+    1608.9 ms  PÔåÆC  HIST_LIST_REQ  02
+    1637.7 ms  CÔåÆP  HIST_LIST_REQ  00020000066e0000066e00000001
+    1640.3 ms  PÔåÆC  HIST_THUMB  <REDACTED_ID>
+    1698.6 ms  CÔåÆP  HIST_THUMB  <REDACTED_ID>
+    1700.3 ms  PÔåÆC  HIST_SLOT  02
+    1728.1 ms  CÔåÆP  HIST_SLOT  0002
+    7713.4 ms  PÔåÆC  LIVEVIEW_INIT  <REDACTED_ID>
+    7742.6 ms  CÔåÆP  LIVEVIEW_INIT  <REDACTED_ID>
+    7803.9 ms  PÔåÆC  LV_START  00
+    7832.5 ms  CÔåÆP  LV_START  00
+   16289.2 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = ON
+   16307.6 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+   17295.5 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = OFF
+   17327.8 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+   17904.0 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = AUTO
+   17931.2 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+   20721.9 ms  PÔåÆC  IMG_HIST_QUERY  00
+   20748.2 ms  CÔåÆP  IMG_HIST_QUERY  00
+   20828.5 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   20853.6 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   21358.3 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   21394.3 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   21898.8 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   21932.4 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   22436.5 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   22457.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   22962.8 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   22984.3 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   23491.8 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   23522.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   24027.4 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   24047.4 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   24551.5 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   24572.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   25076.6 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   25639.8 ms  CÔåÆP  IMG_HIST_POLL  READY  total=216035 B  chunks=9749
+   25835.8 ms  CÔåÆP  IMG_HIST_CHUNK  first  9750 B
+   25839.3 ms  PÔåÆC  IMG_HIST_CHUNK  first  0 B
+   30037.4 ms  PÔåÆC  (0x82,0x22)  
+   30062.5 ms  CÔåÆP  (0x82,0x22)  00
+   32095.6 ms  PÔåÆC  LV_START  00
+   32117.9 ms  CÔåÆP  LV_START  00
+   32890.7 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = ON
+   32912.6 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+   33683.7 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = OFF
+   33707.5 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+   34465.2 ms  PÔåÆC  IMG_HIST_QUERY  00
+   34487.6 ms  CÔåÆP  IMG_HIST_QUERY  00
+   34566.0 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   34592.5 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   35099.7 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   35132.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   35636.9 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   35657.5 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   36162.5 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   36197.4 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   36701.8 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   36740.3 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   37244.5 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   37277.4 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   37781.5 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   37817.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   38329.0 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   38854.8 ms  CÔåÆP  IMG_HIST_POLL  READY  total=216968 B  chunks=9749
+   39051.2 ms  CÔåÆP  IMG_HIST_CHUNK  first  9750 B
+   39055.8 ms  PÔåÆC  IMG_HIST_CHUNK  first  0 B
+   43223.5 ms  PÔåÆC  (0x82,0x22)  
+   43247.6 ms  CÔåÆP  (0x82,0x22)  00
+   44501.5 ms  PÔåÆC  LV_START  00
+   44522.5 ms  CÔåÆP  LV_START  00
+   45892.4 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = AUTO
+   45917.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+   46542.4 ms  PÔåÆC  IMG_HIST_QUERY  00
+   46563.9 ms  CÔåÆP  IMG_HIST_QUERY  00
+   46643.1 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   46667.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   47171.1 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   47193.1 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   47697.1 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   47732.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   48237.0 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   48257.7 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   48765.8 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   48797.4 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   49302.0 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   49322.4 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   49826.9 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   49864.6 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   50370.4 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   50402.6 ms  CÔåÆP  IMG_HIST_POLL  not ready
+   50907.2 ms  PÔåÆC  IMG_HIST_POLL  [check ready]
+   51472.8 ms  CÔåÆP  IMG_HIST_POLL  READY  total=213221 B  chunks=9749
+   51692.3 ms  CÔåÆP  IMG_HIST_CHUNK  first  9750 B
+   51694.8 ms  PÔåÆC  IMG_HIST_CHUNK  first  0 B
+   55793.4 ms  PÔåÆC  (0x82,0x22)  
+   55817.5 ms  CÔåÆP  (0x82,0x22)  00
+   57354.9 ms  PÔåÆC  LV_START  00
+   57377.7 ms  CÔåÆP  LV_START  00
+   58135.1 ms  PÔåÆC  LV_END  [5 frames  0.8 s  6.4 fps]
+   58159.2 ms  CÔåÆP  LV_END  00
+   61425.2 ms  PÔåÆC  LIVEVIEW_INIT  <REDACTED_ID>
+   61457.5 ms  CÔåÆP  LIVEVIEW_INIT  <REDACTED_ID>
+   61522.1 ms  PÔåÆC  LV_START  00
+   61549.6 ms  CÔåÆP  LV_START  00
+   63183.7 ms  PÔåÆC  LV_END  [13 frames  1.7 s  7.8 fps]
+   63212.5 ms  CÔåÆP  LV_END  00
+
+  [IMG_HIST transfer total: 22 chunks, 213243 B, ~32.1 s]
+
+ÔöÇÔöÇÔöÇ Flash / SET_INFO changes ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+
+      1137.5 ms  PÔåÆC  FLASH = AUTO  raw=0b0000000000
+      1159.7 ms  CÔåÆP  type_0x00 = 000b00000000
+      1163.9 ms  PÔåÆC  type_0x0c = 0c0000000000
+      1187.5 ms  CÔåÆP  type_0x00 = 000c00000000
+      1191.3 ms  PÔåÆC  type_0x13 = <REDACTED_ID>
+      1220.1 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1223.5 ms  PÔåÆC  type_0x14 = <REDACTED_ID>
+      1247.4 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1249.6 ms  PÔåÆC  type_0x15 = <REDACTED_ID>
+      1277.6 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1284.5 ms  PÔåÆC  UNKNOWN_16 = <REDACTED_ID>
+      1307.4 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1309.0 ms  PÔåÆC  FILTER? = <REDACTED_ID>
+      1337.4 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1338.5 ms  PÔåÆC  UNKNOWN_18 = <REDACTED_ID>
+      1369.7 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1371.5 ms  PÔåÆC  UNKNOWN_19 = <REDACTED_ID>
+      1397.3 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1398.2 ms  PÔåÆC  UNKNOWN_1a = 1a0000000000
+      1427.5 ms  CÔåÆP  type_0x00 = 001a00000000
+      1429.5 ms  PÔåÆC  UNKNOWN_1b = 1b0000000000
+      1457.6 ms  CÔåÆP  type_0x00 = 001b01000000
+     16289.2 ms  PÔåÆC  FLASH = ON    raw=0b0201000000
+     16307.6 ms  CÔåÆP  type_0x00 = 000b00000000
+     17295.5 ms  PÔåÆC  FLASH = OFF   raw=0b0202000000
+     17327.8 ms  CÔåÆP  type_0x00 = 000b00000000
+     17904.0 ms  PÔåÆC  FLASH = AUTO  raw=0b0200000000
+     17931.2 ms  CÔåÆP  type_0x00 = 000b00000000
+     32890.7 ms  PÔåÆC  FLASH = ON    raw=0b0201000000
+     32912.6 ms  CÔåÆP  type_0x00 = 000b00000000
+     33683.7 ms  PÔåÆC  FLASH = OFF   raw=0b0202000000
+     33707.5 ms  CÔåÆP  type_0x00 = 000b00000000
+     45892.4 ms  PÔåÆC  FLASH = AUTO  raw=0b0200000000
+     45917.4 ms  CÔåÆP  type_0x00 = 000b00000000
+
+ÔöÇÔöÇÔöÇ IMG_HIST chunk summary ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+
+  Chunks : 68
+  Total  : 646,292 B  (631.1 KB)
+  First 4 bytes of chunk 0 data: 00ffd8ffe000104a
+
+
+======================================================================
+  btsnoop_hci.log.last  (10369 KB)
+======================================================================
+
+Total IOS-Link frames : 17242
+Live view frames (cam): 0
+SET_INFO exchanges    : 44
+IMG_HIST chunks recv  : 0
+PULL (0x88) chunks    : 23
+
+ÔöÇÔöÇÔöÇ Timeline (STATUS_POLL + LV_FRAME suppressed) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+
+       0.0 ms  PÔåÆC  DEVICE_PROBE  
+     232.2 ms  CÔåÆP  DEVICE_PROBE  <REDACTED_ID>
+     239.8 ms  PÔåÆC  DEVICE_INFO  00
+     292.4 ms  CÔåÆP  DEVICE_INFO  00000846554a4946494c4d
+     295.9 ms  PÔåÆC  DEVICE_INFO  01
+     352.1 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     354.4 ms  PÔåÆC  DEVICE_INFO  02
+     412.2 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     415.0 ms  PÔåÆC  DEVICE_INFO  03
+     472.2 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     475.5 ms  PÔåÆC  DEVICE_INFO  04
+     532.7 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     536.5 ms  PÔåÆC  DEVICE_INFO  05
+     592.2 ms  CÔåÆP  DEVICE_INFO  <REDACTED_ID>
+     595.3 ms  PÔåÆC  DEVICE_INFO  09
+     652.2 ms  CÔåÆP  DEVICE_INFO  000900
+     655.6 ms  PÔåÆC  DEVICE_INFO  0a
+     712.1 ms  CÔåÆP  DEVICE_INFO  000a00
+     775.9 ms  PÔåÆC  IMAGE_SUPPORT_INFO  
+     831.9 ms  CÔåÆP  IMAGE_SUPPORT_INFO  000000
+     833.3 ms  PÔåÆC  FUNC_INFO  00
+     893.6 ms  CÔåÆP  FUNC_INFO  <REDACTED_ID>
+     905.0 ms  PÔåÆC  FUNC_INFO  00
+     937.5 ms  CÔåÆP  FUNC_INFO  <REDACTED_ID>
+    1096.4 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = AUTO
+    1118.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+    1120.9 ms  PÔåÆC  SET_INFO  [type_0x0c] payload=0c0000000000
+    1149.2 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000c00000000
+    1152.2 ms  PÔåÆC  SET_INFO  [type_0x13] payload=<REDACTED_ID>
+    1178.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1181.6 ms  PÔåÆC  SET_INFO  [type_0x14] payload=<REDACTED_ID>
+    1209.1 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1212.2 ms  PÔåÆC  SET_INFO  [type_0x15] payload=<REDACTED_ID>
+    1238.7 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1240.3 ms  PÔåÆC  SET_INFO  [UNKNOWN_16] payload=<REDACTED_ID>
+    1268.7 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1272.1 ms  PÔåÆC  SET_INFO  [FILTER?] payload=<REDACTED_ID>
+    1300.9 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1304.1 ms  PÔåÆC  SET_INFO  [UNKNOWN_18] payload=<REDACTED_ID>
+    1328.3 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1332.1 ms  PÔåÆC  SET_INFO  [UNKNOWN_19] payload=<REDACTED_ID>
+    1358.6 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1361.5 ms  PÔåÆC  SET_INFO  [UNKNOWN_1a] payload=1a0000000000
+    1388.6 ms  CÔåÆP  SET_INFO  [type_0x00] payload=001a00000000
+    1392.6 ms  PÔåÆC  SET_INFO  [UNKNOWN_1b] payload=1b0000000000
+    1418.7 ms  CÔåÆP  SET_INFO  [type_0x00] payload=001b01000000
+    1428.8 ms  PÔåÆC  HIST_INIT  
+    1448.4 ms  CÔåÆP  HIST_INIT  <REDACTED_ID>
+    1451.1 ms  PÔåÆC  HIST_SCHED  <REDACTED_ID>
+    1480.3 ms  CÔåÆP  HIST_SCHED  <REDACTED_ID>
+    1484.3 ms  PÔåÆC  HIST_COMMIT  
+    1508.6 ms  CÔåÆP  HIST_COMMIT  00
+    1512.1 ms  PÔåÆC  HIST_LIST_REQ  00
+    1538.7 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+    1541.1 ms  PÔåÆC  HIST_SLOT  00
+    1568.3 ms  CÔåÆP  HIST_SLOT  0000
+    1571.1 ms  PÔåÆC  HIST_LIST_REQ  02
+    1599.4 ms  CÔåÆP  HIST_LIST_REQ  00020000066e0000066e00000001
+    1602.5 ms  PÔåÆC  HIST_THUMB  <REDACTED_ID>
+    1660.7 ms  CÔåÆP  HIST_THUMB  <REDACTED_ID>
+    1666.5 ms  PÔåÆC  HIST_SLOT  02
+    1689.0 ms  CÔåÆP  HIST_SLOT  0002
+    1742.8 ms  PÔåÆC  SET_INFO  [FLASH_MODE] = AUTO
+    1763.3 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000b00000000
+    1766.8 ms  PÔåÆC  SET_INFO  [type_0x0c] payload=0c0000000000
+    1796.0 ms  CÔåÆP  SET_INFO  [type_0x00] payload=000c00000000
+    1799.7 ms  PÔåÆC  SET_INFO  [type_0x13] payload=<REDACTED_ID>
+    1823.8 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1826.1 ms  PÔåÆC  SET_INFO  [type_0x14] payload=<REDACTED_ID>
+    1854.8 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1858.5 ms  PÔåÆC  SET_INFO  [type_0x15] payload=<REDACTED_ID>
+    1884.8 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1888.4 ms  PÔåÆC  SET_INFO  [UNKNOWN_16] payload=<REDACTED_ID>
+    1913.3 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1914.9 ms  PÔåÆC  SET_INFO  [FILTER?] payload=<REDACTED_ID>
+    1943.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1946.4 ms  PÔåÆC  SET_INFO  [UNKNOWN_18] payload=<REDACTED_ID>
+    1973.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    1976.2 ms  PÔåÆC  SET_INFO  [UNKNOWN_19] payload=<REDACTED_ID>
+    2005.3 ms  CÔåÆP  SET_INFO  [type_0x00] payload=<REDACTED_ID>
+    2008.4 ms  PÔåÆC  SET_INFO  [UNKNOWN_1a] payload=1a0000000000
+    2033.5 ms  CÔåÆP  SET_INFO  [type_0x00] payload=001a00000000
+    2036.7 ms  PÔåÆC  SET_INFO  [UNKNOWN_1b] payload=1b0000000000
+    2063.4 ms  CÔåÆP  SET_INFO  [type_0x00] payload=001b01000000
+    2067.1 ms  PÔåÆC  HIST_INIT  
+    2093.9 ms  CÔåÆP  HIST_INIT  <REDACTED_ID>
+    2097.4 ms  PÔåÆC  HIST_SCHED  <REDACTED_ID>
+    2126.0 ms  CÔåÆP  HIST_SCHED  <REDACTED_ID>
+    2128.9 ms  PÔåÆC  HIST_COMMIT  
+    2155.2 ms  CÔåÆP  HIST_COMMIT  00
+    2158.1 ms  PÔåÆC  HIST_LIST_REQ  00
+    2183.3 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+    2185.7 ms  PÔåÆC  HIST_SLOT  00
+    2213.3 ms  CÔåÆP  HIST_SLOT  0000
+    2216.6 ms  PÔåÆC  HIST_LIST_REQ  02
+    2258.4 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+    2261.5 ms  PÔåÆC  HIST_SLOT  02
+    2289.4 ms  CÔåÆP  HIST_SLOT  0002
+   37239.3 ms  PÔåÆC  HIST_INIT  
+   37268.3 ms  CÔåÆP  HIST_INIT  <REDACTED_ID>
+   37272.4 ms  PÔåÆC  HIST_SCHED  <REDACTED_ID>
+   37303.3 ms  CÔåÆP  HIST_SCHED  <REDACTED_ID>
+   37306.7 ms  PÔåÆC  HIST_COMMIT  
+   37328.4 ms  CÔåÆP  HIST_COMMIT  00
+   37330.4 ms  PÔåÆC  HIST_LIST_REQ  00
+   37359.9 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+   37361.7 ms  PÔåÆC  HIST_SLOT  00
+   37388.2 ms  CÔåÆP  HIST_SLOT  0000
+   37388.8 ms  PÔåÆC  HIST_LIST_REQ  02
+   37433.9 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+   37436.6 ms  PÔåÆC  HIST_SLOT  02
+   37463.3 ms  CÔåÆP  HIST_SLOT  0002
+   65596.7 ms  PÔåÆC  HIST_INIT  
+   65618.5 ms  CÔåÆP  HIST_INIT  <REDACTED_ID>
+   65620.0 ms  PÔåÆC  HIST_SCHED  <REDACTED_ID>
+   65653.0 ms  CÔåÆP  HIST_SCHED  <REDACTED_ID>
+   65656.5 ms  PÔåÆC  HIST_COMMIT  
+   65678.2 ms  CÔåÆP  HIST_COMMIT  00
+   65681.9 ms  PÔåÆC  HIST_LIST_REQ  00
+   65708.9 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+   65712.0 ms  PÔåÆC  HIST_SLOT  00
+   65739.9 ms  CÔåÆP  HIST_SLOT  0000
+   65742.1 ms  PÔåÆC  HIST_LIST_REQ  02
+   65768.8 ms  CÔåÆP  HIST_LIST_REQ  <REDACTED_ID>
+   65770.9 ms  PÔåÆC  HIST_SLOT  02
+   65799.7 ms  CÔåÆP  HIST_SLOT  0002
+   87520.0 ms  PÔåÆC  PULL_QUERY
+   87548.2 ms  CÔåÆP  PULL_QUERY  <REDACTED_ID>
+   87551.0 ms  PÔåÆC  PULL_READY  <REDACTED_ID>
+   87792.9 ms  CÔåÆP  PULL_READY  000003624d0000261532303236303631
+   87795.4 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   87988.3 ms  CÔåÆP  PULL_CHUNK  0000000000ffd8ffe000104a46494600
+   87992.4 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   88183.7 ms  CÔåÆP  PULL_CHUNK  0000000001711838c67a506b3d8b88dc
+   88187.6 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   88381.5 ms  CÔåÆP  PULL_CHUNK  000000000279e3eac63979639ebcf6af
+   88384.8 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   88611.1 ms  CÔåÆP  PULL_CHUNK  00000000034af491cec7666ff5548506
+   88616.5 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   88825.7 ms  CÔåÆP  PULL_CHUNK  00000000045a33ac16ef2b334d3a1b97
+   88828.8 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   89023.5 ms  CÔåÆP  PULL_CHUNK  0000000005b38bdfa1f3b46b73e29a99
+   89026.7 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   89246.4 ms  CÔåÆP  PULL_CHUNK  000000000637b027e9dcd4d0af19ebd0
+   89250.6 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   89458.4 ms  CÔåÆP  PULL_CHUNK  0000000007643e918ed526ba1ec763d8
+   89460.5 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   89655.7 ms  CÔåÆP  PULL_CHUNK  00000000085be6cfa718e6b7b40d4af6
+   89656.9 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   89861.0 ms  CÔåÆP  PULL_CHUNK  000000000978d7c46b18a0996488ef5d
+   89863.5 ms  PÔåÆC  PULL_CHUNK  0000000a
+   90058.6 ms  CÔåÆP  PULL_CHUNK  000000000a346476fceba1338e4b510a
+   90061.9 ms  PÔåÆC  PULL_CHUNK  0000000b
+   90255.3 ms  CÔåÆP  PULL_CHUNK  000000000bb518d29c6714654a84294d
+   90258.0 ms  PÔåÆC  PULL_CHUNK  0000000c
+   90448.3 ms  CÔåÆP  PULL_CHUNK  000000000cdc30db8f5fc7ff00ad5a45
+   90450.6 ms  PÔåÆC  PULL_CHUNK  0000000d
+   90658.4 ms  CÔåÆP  PULL_CHUNK  000000000d34ae514ed89e4f7ac7f179
+   90664.9 ms  PÔåÆC  PULL_CHUNK  0000000e
+   90873.7 ms  CÔåÆP  PULL_CHUNK  000000000ee05569fb292d87ed13dcd7
+   90877.1 ms  PÔåÆC  PULL_CHUNK  0000000f
+   91091.0 ms  CÔåÆP  PULL_CHUNK  000000000fafb36655209c4f9abc53e1
+   91094.6 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   91303.4 ms  CÔåÆP  PULL_CHUNK  0000000010ae3249008605ded1aeef99
+   91305.2 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   91501.0 ms  CÔåÆP  PULL_CHUNK  000000001117031542dcb8804118f535
+   91505.0 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   91693.4 ms  CÔåÆP  PULL_CHUNK  0000000012cb20707cb575edbd734d1a
+   91695.5 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   91891.1 ms  CÔåÆP  PULL_CHUNK  000000001336f98d8e0609f7af27ed1f
+   91895.9 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   92088.7 ms  CÔåÆP  PULL_CHUNK  0000000014f086b78e6f3bf736f2e067
+   92093.0 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   92305.9 ms  CÔåÆP  PULL_CHUNK  00000000155a3a4d94f7c4cd34acb17b
+   92308.0 ms  PÔåÆC  PULL_CHUNK  <REDACTED_ID>
+   92463.1 ms  CÔåÆP  PULL_CHUNK  00000000166d73fe0a6faff87f58b9d3
+   92465.1 ms  PÔåÆC  PULL_ACK
+   92485.0 ms  CÔåÆP  PULL_ACK  00
+   92486.8 ms  PÔåÆC  PULL_0x05  <REDACTED_ID>
+   92513.2 ms  CÔåÆP  PULL_0x05  00
+
+ÔöÇÔöÇÔöÇ Flash / SET_INFO changes ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+
+      1096.4 ms  PÔåÆC  FLASH = AUTO  raw=0b0000000000
+      1118.4 ms  CÔåÆP  type_0x00 = 000b00000000
+      1120.9 ms  PÔåÆC  type_0x0c = 0c0000000000
+      1149.2 ms  CÔåÆP  type_0x00 = 000c00000000
+      1152.2 ms  PÔåÆC  type_0x13 = <REDACTED_ID>
+      1178.4 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1181.6 ms  PÔåÆC  type_0x14 = <REDACTED_ID>
+      1209.1 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1212.2 ms  PÔåÆC  type_0x15 = <REDACTED_ID>
+      1238.7 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1240.3 ms  PÔåÆC  UNKNOWN_16 = <REDACTED_ID>
+      1268.7 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1272.1 ms  PÔåÆC  FILTER? = <REDACTED_ID>
+      1300.9 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1304.1 ms  PÔåÆC  UNKNOWN_18 = <REDACTED_ID>
+      1328.3 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1332.1 ms  PÔåÆC  UNKNOWN_19 = <REDACTED_ID>
+      1358.6 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1361.5 ms  PÔåÆC  UNKNOWN_1a = 1a0000000000
+      1388.6 ms  CÔåÆP  type_0x00 = 001a00000000
+      1392.6 ms  PÔåÆC  UNKNOWN_1b = 1b0000000000
+      1418.7 ms  CÔåÆP  type_0x00 = 001b01000000
+      1742.8 ms  PÔåÆC  FLASH = AUTO  raw=0b0000000000
+      1763.3 ms  CÔåÆP  type_0x00 = 000b00000000
+      1766.8 ms  PÔåÆC  type_0x0c = 0c0000000000
+      1796.0 ms  CÔåÆP  type_0x00 = 000c00000000
+      1799.7 ms  PÔåÆC  type_0x13 = <REDACTED_ID>
+      1823.8 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1826.1 ms  PÔåÆC  type_0x14 = <REDACTED_ID>
+      1854.8 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1858.5 ms  PÔåÆC  type_0x15 = <REDACTED_ID>
+      1884.8 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1888.4 ms  PÔåÆC  UNKNOWN_16 = <REDACTED_ID>
+      1913.3 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1914.9 ms  PÔåÆC  FILTER? = <REDACTED_ID>
+      1943.4 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1946.4 ms  PÔåÆC  UNKNOWN_18 = <REDACTED_ID>
+      1973.4 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      1976.2 ms  PÔåÆC  UNKNOWN_19 = <REDACTED_ID>
+      2005.3 ms  CÔåÆP  type_0x00 = <REDACTED_ID>
+      2008.4 ms  PÔåÆC  UNKNOWN_1a = 1a0000000000
+      2033.5 ms  CÔåÆP  type_0x00 = 001a00000000
+      2036.7 ms  PÔåÆC  UNKNOWN_1b = 1b0000000000
+      2063.4 ms  CÔåÆP  type_0x00 = 001b01000000
+
+ÔöÇÔöÇÔöÇ 0x88 PULL chunks: 23  total 221,888 B ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+
+

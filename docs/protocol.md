@@ -5,6 +5,8 @@ This file is now a short entry point only.
 The maintained source of truth lives in the wiki-style pages under this folder,
 starting with [README.md](README.md).
 
+Raw traces and capture excerpts are indexed in [evidence.md](evidence.md).
+
 ## Current status snapshot
 
 As of 2026-05-21:

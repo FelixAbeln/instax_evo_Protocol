@@ -5,6 +5,9 @@
 Confirmed working on Gen 1 Mini Evo (film ejected, image visible). All packets
 use the [Link protocol framing](link-protocol.md).
 
+Raw transfer excerpts and chunk-level traces are tracked in
+[print-evidence.md](print-evidence.md).
+
 ## Step 1 — Connect and identify
 
 ```

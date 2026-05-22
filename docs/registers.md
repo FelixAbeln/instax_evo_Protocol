@@ -8,6 +8,9 @@ to mirror the remote-shooting UI and to apply flash changes. FI019 still has no
 reliable direct `(0x80,0x11)` ACKs in our live probes, so treat the mapping
 below as FI028-confirmed unless noted otherwise.
 
+Raw register sweep and read/write excerpts are tracked in
+[registers-evidence.md](registers-evidence.md).
+
 ## Register access format
 
 ```

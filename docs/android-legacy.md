@@ -174,7 +174,7 @@ Link-protocol equivalent and may be specific to the Android stack.
 Using local tooling on:
 
 - `captures/bugreport_2026-05-20/FS_data_log_bt_btsnoop_hci.log`
-- `captures/trace_compare/official_flash_to_transfer.trace`
+- `captures/analysis/traces/trace_compare/official_flash_to_transfer.trace`
 
 we can now detect transfer-like windows in the Android raw profile and compare
 their phase shape to Link `(0x82,10/20/21/22)`.
@@ -242,7 +242,7 @@ Using an earlier local sweep runner, we captured a no-human flow that:
 
 1. sends a candidate raw payload,
 2. runs the full image receive protocol `(82,10/20/21/22)`,
-3. saves one JPEG per candidate under `captures/flash_sweep/`.
+3. saves one JPEG per candidate under `captures/analysis/traces/flash_sweep/`.
 
 Profiles currently encoded in the sweep:
 

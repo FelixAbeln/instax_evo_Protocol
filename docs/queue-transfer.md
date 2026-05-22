@@ -17,6 +17,9 @@ sequence.
 > `instax_lab.evo_protocol.InstaxCamera.download_history_image()` /
 > the `evo-lab history pull` CLI command.
 
+Raw QUE transfer flow excerpts are tracked in
+[queue-transfer-evidence.md](queue-transfer-evidence.md).
+
 ## High-level flow
 
 ```

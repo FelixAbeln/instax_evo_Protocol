@@ -30,6 +30,7 @@ Usage
 from __future__ import annotations
 
 import asyncio
+import json
 import queue
 from collections.abc import Callable
 import struct
@@ -138,7 +139,7 @@ class CameraBackend:
         self._last_shot_change_ts = 0.0
         self._cached_film_reg: int | None = None
         self._cached_lens_reg: int | None = None
-        self._reg_trace_enabled = True
+        self._reg_trace_enabled = False
         self._last_hist_window: list[list[int]] = [[0] * 11 for _ in range(11)]
         self._last_hist_global = 0
         self._use_hist_evaluate_for_adds = False
@@ -553,6 +554,15 @@ class CameraBackend:
             elif cmd == "print_image":
                 asyncio.create_task(
                     self._print_image(msg["path"], msg.get("enable_print", False))
+                )
+            elif cmd == "favorites_dump":
+                asyncio.create_task(self._favorites_dump(msg.get("max_slot", 10)))
+            elif cmd == "favorites_write_default":
+                asyncio.create_task(
+                    self._favorites_write_default(
+                        slot=msg["slot"],
+                        title=msg.get("title", "DEF"),
+                    )
                 )
             elif cmd == "scan":
                 asyncio.create_task(self._scan())
@@ -1739,6 +1749,159 @@ class CameraBackend:
         finally:
             self._ble_busy = False
 
+    async def _recv_expected(self, op1: int, op2: int, timeout: float, payload_predicate=None):
+        """Receive frames until expected opcode (and optional payload predicate) is matched."""
+        deadline = self._loop.time() + timeout
+        while True:
+            left = deadline - self._loop.time()
+            if left <= 0:
+                raise asyncio.TimeoutError(f"timeout waiting for ({op1:#04x},{op2:#04x})")
+            rop1, rop2, p = await self._recv_frame(timeout=min(left, 1.0))
+            if rop1 != op1 or rop2 != op2:
+                continue
+            if payload_predicate is not None and not payload_predicate(p):
+                continue
+            return p
+
+    async def _favorites_read_slot(self, slot: int, selector: int, timeout: float = 6.0) -> bytes:
+        if not 1 <= slot <= 10:
+            raise ValueError("slot must be 1..10")
+        if selector not in (1, 2):
+            raise ValueError("selector must be 1 or 2")
+        req = bytes([selector, 0x00, slot, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        await self._write(make_packet(0x80, 0x17, req))
+        return await self._recv_expected(
+            0x80,
+            0x17,
+            timeout=timeout,
+            payload_predicate=lambda p: len(p) >= 3 and p[1] == selector and p[2] == slot,
+        )
+
+    async def _favorites_dump(self, max_slot: int = 10):
+        if not self._connected:
+            return
+        max_slot = max(1, min(int(max_slot), 10))
+        if self._ble_busy:
+            self._log("Favorites dump: BLE busy — try again shortly")
+            return
+        self._ble_busy = True
+        rows: list[dict] = []
+        try:
+            async with self._ble_op_lock:
+                await self._flush_rx()
+                for slot in range(1, max_slot + 1):
+                    sel1 = await self._favorites_read_slot(slot=slot, selector=1, timeout=8.0)
+                    sel2 = await self._favorites_read_slot(slot=slot, selector=2, timeout=8.0)
+                    row = {
+                        "slot": slot,
+                        "selector_01": sel1.hex(),
+                        "selector_02": sel2.hex(),
+                        "occupied_01": sel1[3] if len(sel1) >= 4 else None,
+                        "occupied_02": sel2[3] if len(sel2) >= 4 else None,
+                    }
+                    rows.append(row)
+                    self._log(
+                        f"Favorites slot {slot:02d}: "
+                        f"s1={row['selector_01']} s2={row['selector_02']}"
+                    )
+
+            out_dir = Path("captures/favorites/snapshots")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out_path = out_dir / f"favorites_slots_{ts}.json"
+            payload = {
+                "address": self.address,
+                "model": getattr(self._path, "model_id", "") or "",
+                "max_slot": max_slot,
+                "slots": rows,
+            }
+            out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self._log(f"Favorites dump saved: {out_path}")
+            self._ui("favorites_dump_done", path=str(out_path), slots=rows)
+        except Exception as e:
+            self._log(f"Favorites dump error: {e}")
+            self._ui("favorites_error", msg=str(e))
+        finally:
+            self._ble_busy = False
+
+    async def _favorites_write_default(self, slot: int, title: str = "DEF"):
+        if not self._connected:
+            return
+        if not 1 <= slot <= 10:
+            self._ui("favorites_error", msg="Slot must be 1..10")
+            return
+        title = (title or "DEF")[:3]
+        try:
+            title_b = title.encode("ascii")
+        except UnicodeEncodeError:
+            self._ui("favorites_error", msg="Title must be ASCII")
+            return
+        if len(title_b) != 3:
+            self._ui("favorites_error", msg="Title must be exactly 3 characters")
+            return
+
+        if self._ble_busy:
+            self._log("Favorites write: BLE busy — try again shortly")
+            return
+        self._ble_busy = True
+        try:
+            write_a = bytes.fromhex("0102") + bytes([slot]) + b"\x00" + bytes.fromhex("0000000032000000") + title_b
+            write_b = bytes.fromhex("0202") + bytes([slot]) + b"\x00" + bytes.fromhex("0000000000000000000000")
+
+            async with self._ble_op_lock:
+                await self._flush_rx()
+
+                await self._write(make_packet(0x85, 0x00))
+                ack_8500_pre = await self._recv_expected(0x85, 0x00, timeout=8.0)
+
+                await self._write(make_packet(0x85, 0x01, bytes.fromhex("070001000000000000")))
+                ack_8501_pre = await self._recv_expected(0x85, 0x01, timeout=8.0)
+
+                await self._write(make_packet(0x80, 0x17, write_a))
+                ack_a = await self._recv_expected(
+                    0x80,
+                    0x17,
+                    timeout=8.0,
+                    payload_predicate=lambda p: len(p) >= 3 and p[1] == 0x01 and p[2] == slot,
+                )
+
+                await self._write(make_packet(0x80, 0x17, write_b))
+                ack_b = await self._recv_expected(
+                    0x80,
+                    0x17,
+                    timeout=8.0,
+                    payload_predicate=lambda p: len(p) >= 3 and p[1] == 0x02 and p[2] == slot,
+                )
+
+                await self._write(make_packet(0x85, 0x00))
+                ack_8500_post = await self._recv_expected(0x85, 0x00, timeout=8.0)
+
+                await self._write(make_packet(0x85, 0x01, bytes.fromhex("070000000000000000")))
+                ack_8501_post = await self._recv_expected(0x85, 0x01, timeout=8.0)
+
+                pre_sel1 = await self._favorites_read_slot(slot=slot, selector=1, timeout=8.0)
+                pre_sel2 = await self._favorites_read_slot(slot=slot, selector=2, timeout=8.0)
+
+            self._log(f"Favorites default write slot {slot:02d} title={title}")
+            self._log(f"  write_a={write_a.hex()}")
+            self._log(f"  write_b={write_b.hex()}")
+            self._log(f"  ack_8500_pre={ack_8500_pre.hex()} ack_8501_pre={ack_8501_pre.hex()}")
+            self._log(f"  ack_a={ack_a.hex()} ack_b={ack_b.hex()}")
+            self._log(f"  ack_8500_post={ack_8500_post.hex()} ack_8501_post={ack_8501_post.hex()}")
+            self._log(f"  post_sel1={pre_sel1.hex()} post_sel2={pre_sel2.hex()}")
+            self._ui(
+                "favorites_write_done",
+                slot=slot,
+                title=title,
+                selector_01=pre_sel1.hex(),
+                selector_02=pre_sel2.hex(),
+            )
+        except Exception as e:
+            self._log(f"Favorites write error: {e}")
+            self._ui("favorites_error", msg=str(e))
+        finally:
+            self._ble_busy = False
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Camera selection helpers
@@ -2088,6 +2251,48 @@ class InstaxApp:
             xf, textvariable=self._xfer_label_var, foreground=DIM
         ).pack(anchor=tk.W, pady=(4, 0))
 
+        fav_lf = ttk.LabelFrame(left, text="Favorites", padding=10)
+        fav_lf.pack(fill=tk.X, padx=4, pady=4)
+
+        fav_row = ttk.Frame(fav_lf)
+        fav_row.pack(fill=tk.X)
+        ttk.Label(fav_row, text="Slot", foreground=DIM).pack(side=tk.LEFT)
+        self._fav_slot_var = tk.IntVar(value=1)
+        self._fav_slot_spin = tk.Spinbox(
+            fav_row,
+            from_=1,
+            to=10,
+            width=4,
+            textvariable=self._fav_slot_var,
+            bg=BG3,
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+        )
+        self._fav_slot_spin.pack(side=tk.LEFT, padx=(6, 12))
+
+        ttk.Label(fav_row, text="Title", foreground=DIM).pack(side=tk.LEFT)
+        self._fav_title_var = tk.StringVar(value="DEF")
+        self._fav_title_ent = ttk.Entry(fav_row, width=6, textvariable=self._fav_title_var)
+        self._fav_title_ent.pack(side=tk.LEFT, padx=(6, 0))
+
+        fav_btn_row = ttk.Frame(fav_lf)
+        fav_btn_row.pack(fill=tk.X, pady=(8, 0))
+        self.btn_fav_dump_panel = ttk.Button(
+            fav_btn_row,
+            text="Dump Slots",
+            command=self._favorites_dump,
+            state="disabled",
+        )
+        self.btn_fav_dump_panel.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_fav_default_panel = ttk.Button(
+            fav_btn_row,
+            text="Write Default",
+            command=self._favorites_write_default,
+            state="disabled",
+        )
+        self.btn_fav_default_panel.pack(side=tk.LEFT)
+
         thumb_lf = ttk.LabelFrame(left, text="Last Image", padding=6)
         thumb_lf.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
@@ -2191,6 +2396,8 @@ class InstaxApp:
                 self.btn_print.configure(state="normal")
                 self.btn_pull.configure(state="normal")
                 self.btn_queue_status.configure(state="normal")
+                self.btn_fav_dump_panel.configure(state="normal")
+                self.btn_fav_default_panel.configure(state="normal")
             elif state in ("disconnected", "error"):
                 label = (
                     "⬤  Disconnected" if state == "disconnected"
@@ -2204,6 +2411,8 @@ class InstaxApp:
                 self.btn_print.configure(state="disabled")
                 self.btn_pull.configure(state="disabled")
                 self.btn_queue_status.configure(state="disabled")
+                self.btn_fav_dump_panel.configure(state="disabled")
+                self.btn_fav_default_panel.configure(state="disabled")
                 self._set_flash_controls(False)
 
         elif kind == "camera_info":
@@ -2310,6 +2519,24 @@ class InstaxApp:
             else:
                 messagebox.showerror("Scan Error", msg["msg"], parent=self.root)
 
+        elif kind == "favorites_dump_done":
+            path = msg.get("path", "")
+            rows = msg.get("slots", [])
+            self._append_log(f"Favorites dump complete: {len(rows)} slot(s) -> {path}")
+
+        elif kind == "favorites_write_done":
+            slot = msg.get("slot")
+            title = msg.get("title")
+            self._append_log(
+                f"Favorites default write OK: slot={slot} title={title} "
+                f"s1={msg.get('selector_01','')} s2={msg.get('selector_02','')}"
+            )
+
+        elif kind == "favorites_error":
+            emsg = msg.get("msg", "Favorites operation failed")
+            self._append_log(f"Favorites error: {emsg}")
+            messagebox.showerror("Favorites", emsg, parent=self.root)
+
     # ── log helpers ───────────────────────────────────────────────────────────
 
     def _set_tally_text(self, text: str):
@@ -2360,6 +2587,21 @@ class InstaxApp:
 
     def _queue_status(self):
         self.backend.send_cmd("check_queue")
+
+    def _favorites_dump(self):
+        self.backend.send_cmd("favorites_dump", max_slot=10)
+
+    def _favorites_write_default(self):
+        try:
+            slot = int(self._fav_slot_var.get())
+        except Exception:
+            messagebox.showerror("Favorites", "Invalid slot", parent=self.root)
+            return
+        title = (self._fav_title_var.get() or "DEF")[:3]
+        if len(title) != 3:
+            messagebox.showerror("Favorites", "Title must be exactly 3 characters", parent=self.root)
+            return
+        self.backend.send_cmd("favorites_write_default", slot=slot, title=title)
 
     def _open_liveview(self):
         if self._liveview_win and self._liveview_win.winfo_exists():

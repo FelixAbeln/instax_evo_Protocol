@@ -15,6 +15,7 @@ Print sequence (javl/InstaxBLE compatible):
 
 import asyncio
 import struct
+import time
 from io import BytesIO
 from math import ceil
 from pathlib import Path
@@ -146,6 +147,48 @@ class InstaxCamera:
         await self._send(pkt)
         raw = await self._recv(timeout)
         return decode_response(raw)
+
+    async def _recv_match(
+        self,
+        op1: int,
+        op2: int,
+        timeout: float = 5.0,
+        payload_predicate=None,
+    ) -> dict:
+        """Receive until the expected response opcode (and optional payload predicate) matches."""
+        deadline = time.monotonic() + timeout
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise asyncio.TimeoutError(f"timeout waiting for ({op1:#04x},{op2:#04x})")
+            raw = await self._recv(timeout=left)
+            dec = decode_response(raw)
+            if dec.get("error"):
+                continue
+            rop1, rop2 = dec.get("op", (-1, -1))
+            if (rop1, rop2) != (op1, op2):
+                continue
+            if payload_predicate is not None and not payload_predicate(dec.get("payload", b"")):
+                continue
+            return dec
+
+    async def _send_recv_match(
+        self,
+        op1: int,
+        op2: int,
+        payload: bytes = b"",
+        timeout: float = 5.0,
+        payload_predicate=None,
+    ) -> dict:
+        pkt = create_packet(op1, op2, payload)
+        self._log(f"  --> op=({op1:#04x},{op2:#04x}) payload={payload.hex()!r} [{len(pkt)}B]")
+        await self._send(pkt)
+        return await self._recv_match(
+            op1=op1,
+            op2=op2,
+            timeout=timeout,
+            payload_predicate=payload_predicate,
+        )
 
     # ------------------------------------------------------------------
     # Connection / context manager
@@ -532,6 +575,119 @@ class InstaxCamera:
                       f"(starts with {jpeg_buf[:4].hex()})")
 
         return bytes(jpeg_buf)
+
+    # ------------------------------------------------------------------
+    # Favorites slots (0x80,0x17 + 0x85 save bracket)
+    # ------------------------------------------------------------------
+
+    async def favorites_read_slot(self, slot: int, selector: int = 1, timeout: float = 6.0) -> bytes:
+        """Read one favorites slot surface.
+
+        selector=1 -> slot content/title surface
+        selector=2 -> slot state surface
+        """
+        if not 1 <= slot <= 10:
+            raise ValueError("slot must be in range 1..10")
+        if selector not in (1, 2):
+            raise ValueError("selector must be 1 or 2")
+
+        req = bytes([selector, 0x00, slot, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+
+        def pred(p: bytes) -> bool:
+            return len(p) >= 3 and p[1] == selector and p[2] == slot
+
+        dec = await self._send_recv_match(
+            0x80,
+            0x17,
+            req,
+            timeout=timeout,
+            payload_predicate=pred,
+        )
+        return dec.get("payload", b"")
+
+    async def favorites_dump_slots(self, max_slot: int = 10, timeout: float = 6.0) -> list[dict]:
+        if max_slot < 1:
+            raise ValueError("max_slot must be >= 1")
+        rows: list[dict] = []
+        for slot in range(1, max_slot + 1):
+            sel1 = await self.favorites_read_slot(slot=slot, selector=1, timeout=timeout)
+            sel2 = await self.favorites_read_slot(slot=slot, selector=2, timeout=timeout)
+            row = {
+                "slot": slot,
+                "selector_01": sel1.hex(),
+                "selector_02": sel2.hex(),
+                "occupied_01": sel1[3] if len(sel1) >= 4 else None,
+                "occupied_02": sel2[3] if len(sel2) >= 4 else None,
+            }
+            rows.append(row)
+        return rows
+
+    async def favorites_write_slot(
+        self,
+        slot: int,
+        profile_blob: bytes,
+        title: str,
+        state_blob: bytes,
+        timeout: float = 8.0,
+    ) -> dict:
+        """Write one favorites slot using the confirmed 0x85-bracketed two-write flow."""
+        if not 1 <= slot <= 10:
+            raise ValueError("slot must be in range 1..10")
+        if len(profile_blob) != 8:
+            raise ValueError("profile_blob must be exactly 8 bytes")
+        title_b = title.encode("ascii")
+        if len(title_b) != 3:
+            raise ValueError("title must be exactly 3 ASCII characters")
+        if len(state_blob) != 11:
+            raise ValueError("state_blob must be exactly 11 bytes")
+
+        write_a = bytes([0x01, 0x02, slot, 0x00]) + profile_blob + title_b
+        write_b = bytes([0x02, 0x02, slot, 0x00]) + state_blob
+
+        pre_8500 = await self._send_recv_match(0x85, 0x00, b"", timeout=timeout)
+        pre_8501 = await self._send_recv_match(0x85, 0x01, bytes.fromhex("070001000000000000"), timeout=timeout)
+
+        ack_a = await self._send_recv_match(
+            0x80,
+            0x17,
+            write_a,
+            timeout=timeout,
+            payload_predicate=lambda p: len(p) >= 3 and p[1] == 0x01 and p[2] == slot,
+        )
+        ack_b = await self._send_recv_match(
+            0x80,
+            0x17,
+            write_b,
+            timeout=timeout,
+            payload_predicate=lambda p: len(p) >= 3 and p[1] == 0x02 and p[2] == slot,
+        )
+
+        post_8500 = await self._send_recv_match(0x85, 0x00, b"", timeout=timeout)
+        post_8501 = await self._send_recv_match(0x85, 0x01, bytes.fromhex("070000000000000000"), timeout=timeout)
+
+        return {
+            "slot": slot,
+            "write_a": write_a.hex(),
+            "write_b": write_b.hex(),
+            "ack_8500_pre": pre_8500.get("payload", b"").hex(),
+            "ack_8501_pre": pre_8501.get("payload", b"").hex(),
+            "ack_a": ack_a.get("payload", b"").hex(),
+            "ack_b": ack_b.get("payload", b"").hex(),
+            "ack_8500_post": post_8500.get("payload", b"").hex(),
+            "ack_8501_post": post_8501.get("payload", b"").hex(),
+        }
+
+    async def favorites_write_default_slot(self, slot: int, title: str = "DEF", timeout: float = 8.0) -> dict:
+        """Write the currently validated full-default favorites profile to a slot."""
+        profile_blob = bytes.fromhex("0000000032000000")
+        state_blob = bytes.fromhex("0000000000000000000000")
+        return await self.favorites_write_slot(
+            slot=slot,
+            profile_blob=profile_blob,
+            title=title,
+            state_blob=state_blob,
+            timeout=timeout,
+        )
 
 
 # Backwards-compatible alias (cli.py imports this name)

@@ -7,6 +7,9 @@ The Instax Link protocol is the framing used by the Instax iOS app, by
 cameras (Mini Evo, Evo Wide, and the assumed Mini Evo Cinema). It runs over the
 shared GATT service described in [overview.md](overview.md).
 
+For opcode-specific raw traces, use the topic evidence pages listed in
+[evidence.md](evidence.md).
+
 ## Packet format
 
 ```

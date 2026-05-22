@@ -2,6 +2,8 @@
 
 ← [Wiki index](README.md)
 
+For raw capture excerpts behind topic claims, use [evidence.md](evidence.md).
+
 ## Protocol coverage status (as of 2026-05-21)
 
 | Feature | Evo Wide FI028 (Gen 2) | Mini Evo FI019 (Gen 1) | Opcode(s) |

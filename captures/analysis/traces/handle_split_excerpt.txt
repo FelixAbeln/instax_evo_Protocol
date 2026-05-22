@@ -1,0 +1,8 @@
+# Sanitized handle_split excerpt
+# Original handle_split capture is local-only.
+
+t=125.73 s   phone -> cam: op=(80,15) payload=[17x00]
+t=125.82 s   phone -> cam: op=(82,00) payload=[00]
+t=125.87 s   phone -> cam: op=(82,01) payload=[]
+... pull cadence continues ...
+t=134.38 s   phone -> cam: op=(82,02) payload=[00]

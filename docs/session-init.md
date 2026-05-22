@@ -5,6 +5,9 @@
 This is the complete sequence sent at the start of every Link-protocol session,
 before any print, live view, image pull, or HIST read.
 
+Raw captures and timestamped init excerpts are tracked in
+[session-init-evidence.md](session-init-evidence.md).
+
 ## Gen 1 vs Gen 2 at init time
 
 | Step | Gen 1 FI019 (Mini Evo) | Gen 2 FI028 (Evo Wide) |

@@ -21,6 +21,20 @@ comparison work:
 
 - `analyze_bugreport_trace.py`
 - `compare_trace_files.py`
+- `favorites_slot_codec.py` - decode `(80,17)` slot records and build current
+  slot-write payload pairs from observed traces (includes provisional
+  exposure decode/encode in 1/3 EV steps)
+- `favorites_live_slots.py` - connect to camera, dump all favorites slots to a
+  JSON snapshot, and diff two snapshots after camera-side changes
+- `decode_8801_compact.py` - decode raw `(88,01)` metadata payloads and match
+  compact-tail fields against a favorites snapshot
+
+Quick usage:
+
+- `python scripts/favorites_live_slots.py dump --address <BLE_ADDR>`
+- `python scripts/favorites_live_slots.py diff <before.json> <after.json>`
+- `python scripts/decode_8801_compact.py --raw <RAW_8801_HEX> --snapshot <favorites_snapshot.json>`
+- `python scripts/decode_8801_compact.py --log <console.txt> --snapshot <favorites_snapshot.json>`
 
 ## Cleanup note
 

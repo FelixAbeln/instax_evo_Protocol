@@ -1,0 +1,214 @@
+!@bugreport_mode BUGREPORT_INTERACTIVE, and dumpstate by default
+Module metadata package name: com.google.android.modulemetadata
+Setting progress: 25/9007 (0%)
+Setting progress: 30/9007 (0%)
+Calling IDumpstateDevice implementation using path /data/user_de/0/com.android.shell/files/bugreports/dumpstate_board.txt
+Calling IDumpstateDevice implementation using path /data/user_de/0/com.android.shell/files/bugreports/dumpstate_board.bin
+Using IDumpstateDevice AIDL HALdumpstateBoard failed: Status(-8, EX_SERVICE_SPECIFIC): '1: Unsupported mode'
+Ignoring empty dumpstate_board.txt
+Ignoring empty dumpstate_board.bin
+Setting progress: 35/9007 (0%)
+Setting progress: 40/9007 (0%)
+Setting progress: 45/9007 (0%)
+Setting progress: 50/9007 (0%)
+Setting progress: 55/9007 (0%)
+Launching async 'SERIALIZE PERFETTO TRACE'Setting progress: 85/9007 (0%)
+Setting progress: 135/9007 (1%)
+Setting progress: 185/9007 (2%)
+Duration of 'EVENT LOG': 0.09s
+Duration of 'STATS LOG': 0.03s
+Setting progress: 285/9007 (3%)
+Duration of 'RADIO LOG': 0.08s
+logcat: Logcat read failure: No such file or directory
+*** command 'logcat -L -b all -v threadtime -v printable -v uid -d *:v' failed: exit code 1
+Start thread pool:2
+Duration of 'Dmabuf dump': 1.12s
+Setting progress: 361/9007 (4%)
+Adding dir /cache/recovery (recursive: 1)
+Adding dir /data/misc/recovery (recursive: 1)
+Adding dir /data/misc/update_engine_log (recursive: 1)
+Adding dir /data/misc/update_engine/prefs (recursive: 1)
+Adding dir /data/misc/logd (recursive: 0)
+Adding dir /data/misc/prereboot (recursive: 0)
+MOUNT INFO: 233 entries added to zip file
+Duration of 'LPDUMP': 1.03s
+Adding dir /metadata/ota (recursive: 1)
+execvp on command 'iotop -n 1 -m 100' failed (error: No such file or directory)
+*** command 'iotop -n 1 -m 100' failed: exit code 1
+Setting progress: 451/9007 (5%)
+Setting progress: 541/9007 (6%)
+open(/data/log/dumpstate_debug_history.lst): No such file or directory
+Setting progress: 631/9007 (7%)
+Adding dir /data/misc/apexdata/com.android.uwb/log (recursive: 1)
+Duration of 'DUMP TRACES': 11.82s
+Duration of 'Wait for ': 8.33s
+shutdown thread pool
+Start thread pool:3
+Calling IDumpstateDevice implementation using path /data/user_de/0/com.android.shell/files/bugreports/dumpstate_board.txt
+Calling IDumpstateDevice implementation using path /data/user_de/0/com.android.shell/files/bugreports/dumpstate_board.bin
+Using IDumpstateDevice AIDL HALdumpstateBoard failed: Status(-8, EX_SERVICE_SPECIFIC): '1: Unsupported mode'
+Ignoring empty dumpstate_board.txt
+Ignoring empty dumpstate_board.bin
+section 1000 status 1
+section 1000 status 2
+section 1002 status 1
+section 1002 status 2
+section 1109 status 1
+section 1109 status 2
+section 1110 status 1
+section 1110 status 2
+section 1111 status 1
+section 1111 status 2
+section 1112 status 1
+section 1112 status 2
+section 1113 status 1
+section 1113 status 2
+section 1114 status 1
+section 1114 status 2
+section 1115 status 1
+section 1115 status 2
+section 2001 status 1
+section 2001 status 2
+section 2002 status 1
+section 2002 status 2
+section 2003 status 1
+Duration of 'CPU INFO': 1.05s
+Setting progress: 721/9007 (8%)
+section 2003 status 2
+section 2004 status 1
+section 2004 status 2
+section 2005 status 1
+ls: SF_Dump: Permission denied
+ls: anomaly: Permission denied
+ls: battery_service: Permission denied
+ls: eternal: Permission denied
+ls: mars: Permission denied
+ls: mocca: Permission denied
+ls: netstats: Permission denied
+ls: wdata: Permission denied
+*** command 'ls -a -l -R /data/log/' failed: exit code 1
+AddAnrTraceDir(): dump_traces_file=/data/log/dumptrace_fymE40, anr_traces_dir=/data/anr
+Dumping current ANR traces (/data/log/dumptrace_fymE40) to the main bugreport entry
+Setting progress: 816/9007 (9%)
+Failed to unlink file (/data/log/watchdog_ps): No such file or directory
+section 2005 status 2
+section 2006 status 1
+section 2006 status 2
+section 2007 status 1
+section 2007 status 2
+section 3054 status 1
+section 3054 status 2
+section 3055 status 1
+section 3055 status 2
+section 3056 status 1
+section 3056 status 2
+done
+Duration of 'INCIDENT REPORT': 2.12s
+Setting progress: 921/9007 (10%)
+Setting progress: 996/9007 (11%)
+Adding dir /system/etc/vintf/ (recursive: 1)
+Adding dir /vendor/etc/vintf/ (recursive: 1)
+Adding dir /product/etc/vintf/ (recursive: 1)
+Adding dir /system_ext/etc/vintf/ (recursive: 1)
+Adding dir /data/misc/nfc/logs (recursive: 1)
+Setting progress: 1106/9007 (12%)
+Setting progress: 1191/9007 (13%)
+Setting progress: 1261/9007 (14%)
+Setting progress: 1361/9007 (15%)
+Setting progress: 1451/9007 (16%)
+iptables v1.8.11 (legacy): can't initialize iptables table `filter': Permission denied (you must be root)
+Perhaps iptables or your kernel needs to be upgraded.
+*** command 'iptables -L -nvx' failed: exit code 3
+ip6tables v1.8.11 (legacy): can't initialize ip6tables table `filter': Permission denied (you must be root)
+Perhaps ip6tables or your kernel needs to be upgraded.
+*** command 'ip6tables -L -nvx' failed: exit code 3
+iptables v1.8.11 (legacy): can't initialize iptables table `nat': Permission denied (you must be root)
+Perhaps iptables or your kernel needs to be upgraded.
+*** command 'iptables -t nat -L -nvx' failed: exit code 3
+iptables v1.8.11 (legacy): can't initialize iptables table `mangle': Permission denied (you must be root)
+Perhaps iptables or your kernel needs to be upgraded.
+*** command 'iptables -t mangle -L -nvx' failed: exit code 3
+ip6tables v1.8.11 (legacy): can't initialize ip6tables table `mangle': Permission denied (you must be root)
+Perhaps ip6tables or your kernel needs to be upgraded.
+*** command 'ip6tables -t mangle -L -nvx' failed: exit code 3
+iptables v1.8.11 (legacy): can't initialize iptables table `raw': Permission denied (you must be root)
+Perhaps iptables or your kernel needs to be upgraded.
+*** command 'iptables -t raw -L -nvx' failed: exit code 3
+ip6tables v1.8.11 (legacy): can't initialize ip6tables table `raw': Permission denied (you must be root)
+Perhaps ip6tables or your kernel needs to be upgraded.
+*** command 'ip6tables -t raw -L -nvx' failed: exit code 3
+Setting progress: 1541/9007 (17%)
+netstat: /proc/crypto: Permission denied
+netstat: /proc/vmkmsg: Permission denied
+netstat: /proc/devices: Permission denied
+netstat: /proc/ioports: Permission denied
+netstat: /proc/kallsyms: Permission denied
+netstat: /proc/key-users: Permission denied
+netstat: /proc/kpagecount: Permission denied
+netstat: /proc/execdomains: Permission denied
+netstat: /proc/kpagecgroup: Permission denied
+Setting progress: 1626/9007 (18%)
+RTNETLINK answers: Operation not permitted
+Dump terminated
+*** command 'ip xfrm policy' failed: exit code 1
+Duration of 'SERVICE HIGH connectivity': 4.84s
+Error: must be root
+Adding dir /data/misc/snapshotctl_log (recursive: 0)
+execvp on command 'typec_connector_class' failed (error: No such file or directory)
+*** command 'typec_connector_class' failed: exit code 1
+Setting progress: 1716/9007 (19%)
+Adding dir /data/log/bt (recursive: 1)
+Setting progress: 1846/9007 (20%)
+Setting progress: 1906/9007 (21%)
+Duration of 'APP SERVICES NON-PLATFORM': 11.11s
+Can't find service: android.hardware.boot.IBootControl/default
+Failed to start dump thread for service: android.hardware.boot.IBootControl/default, status: -2Can't find service: android.hardware.dumpstate.IDumpstateDevice/default
+Failed to start dump thread for service: android.hardware.dumpstate.IDumpstateDevice/default, status: -2Can't find service: android.hardware.radio.config.IRadioConfig/default
+Failed to start dump thread for service: android.hardware.radio.config.IRadioConfig/default, status: -2Can't find service: android.hardware.radio.data.IRadioData/slot1
+Failed to start dump thread for service: android.hardware.radio.data.IRadioData/slot1, status: -2Can't find service: android.hardware.radio.data.IRadioData/slot2
+Failed to start dump thread for service: android.hardware.radio.data.IRadioData/slot2, status: -2Can't find service: android.hardware.radio.messaging.IRadioMessaging/slot1
+Failed to start dump thread for service: android.hardware.radio.messaging.IRadioMessaging/slot1, status: -2Can't find service: android.hardware.radio.messaging.IRadioMessaging/slot2
+Failed to start dump thread for service: android.hardware.radio.messaging.IRadioMessaging/slot2, status: -2Can't find service: android.hardware.radio.modem.IRadioModem/slot1
+Failed to start dump thread for service: android.hardware.radio.modem.IRadioModem/slot1, status: -2Can't find service: android.hardware.radio.modem.IRadioModem/slot2
+Failed to start dump thread for service: android.hardware.radio.modem.IRadioModem/slot2, status: -2Can't find service: android.hardware.radio.network.IRadioNetwork/slot1
+Failed to start dump thread for service: android.hardware.radio.network.IRadioNetwork/slot1, status: -2Can't find service: android.hardware.radio.network.IRadioNetwork/slot2
+Failed to start dump thread for service: android.hardware.radio.network.IRadioNetwork/slot2, status: -2Can't find service: android.hardware.radio.sap.ISap/slot1
+Failed to start dump thread for service: android.hardware.radio.sap.ISap/slot1, status: -2Can't find service: android.hardware.radio.sap.ISap/slot2
+Failed to start dump thread for service: android.hardware.radio.sap.ISap/slot2, status: -2Can't find service: android.hardware.radio.sim.IRadioSim/slot1
+Failed to start dump thread for service: android.hardware.radio.sim.IRadioSim/slot1, status: -2Can't find service: android.hardware.radio.sim.IRadioSim/slot2
+Failed to start dump thread for service: android.hardware.radio.sim.IRadioSim/slot2, status: -2Can't find service: android.hardware.radio.voice.IRadioVoice/slot1
+Failed to start dump thread for service: android.hardware.radio.voice.IRadioVoice/slot1, status: -2Can't find service: android.hardware.radio.voice.IRadioVoice/slot2
+Failed to start dump thread for service: android.hardware.radio.voice.IRadioVoice/slot2, status: -2Can't find service: android.hardware.secure_element.ISecureElement/eSE1
+Failed to start dump thread for service: android.hardware.secure_element.ISecureElement/eSE1, status: -2Can't find service: android.hardware.tetheroffload.IOffload/default
+Failed to start dump thread for service: android.hardware.tetheroffload.IOffload/default, status: -2Can't find service: android.hardware.usb.IUsb/default
+Failed to start dump thread for service: android.hardware.usb.IUsb/default, status: -2Error with service 'android.os.UpdateEngineService' while dumping PID: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineService' while dumping thread info: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineService' while dumping clients info: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineService' while dumping: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineStableService' while dumping PID: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineStableService' while dumping thread info: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineStableService' while dumping clients info: FAILED_TRANSACTION
+Error with service 'android.os.UpdateEngineStableService' while dumping: FAILED_TRANSACTION
+Can't find service: android.system.vold.IVold/default
+Failed to start dump thread for service: android.system.vold.IVold/default, status: -2Duration of 'DUMPSYS HIGH': 61.21s
+Duration of 'DUMPSYS HIGH': 61.22s
+Error with service 'mdm.remotedesktop' while dumping: PERMISSION_DENIED
+*** command '/system/bin/dumpsys -T 60000 activity provider all-non-platform' timed out after 60.001s (killing pid 13809)
+Setting progress: 2026/9007 (22%)
+Duration of 'APP PROVIDERS NON-PLATFORM': 60.00s
+Setting progress: 2086/9007 (23%)
+Duration of 'APP PROVIDERS SEC_MEDIA': 18.86s
+Setting progress: 2182/9007 (24%)
+*** command 'DUMPSYS NORMAL' timed out after 98771ms
+Duration of 'DUMPSYS NORMAL': 100.76s
+Duration of 'DUMPSYS NORMAL': 100.89s
+Adding dir /linkerconfig (recursive: 1)
+Adding frozen processes from /sys/fs/cgroup
+Duration of 'DUMPSTATE': 101.17s
+Adjusting max progress from 9007 to 22849
+Setting progress: 20772/22849 (90%)
+Duration of 'Total Dumpstate': 115.04s
+Adding main entry (dumpstate.txt) from /data/user_de/0/com.android.shell/files/bugreports/dumpstate.tmp to .zip bugreport
+dumpstate id 12 finished around 2026/05/20 21:30:07 (118 s)
+Adding zip text entry main_entry.txt
+dumpstate_log.txt entry on zip file logged up to here

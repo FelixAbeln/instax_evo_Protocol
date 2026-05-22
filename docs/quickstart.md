@@ -7,6 +7,8 @@ plus [link-protocol.md](link-protocol.md) (for the opcode table) is enough to
 build a working Python client that connects, prints, pulls live-view frames,
 and downloads photos from an Instax Evo Wide (FI028) or Mini Evo (FI019).
 
+If you need raw packet excerpts for any step here, use [evidence.md](evidence.md).
+
 Every code block in this file is runnable as-is against a real camera. Required
 deps: `pip install bleak pillow`.
 

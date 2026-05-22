@@ -14,9 +14,12 @@ thereof) tells the camera which mode to use. **Do not close and reopen the
 session between pulls** — keep one `(0x82,00)` session open for the entire
 image/sequence.
 
+Raw pull-loop traces and timing excerpts are tracked in
+[live-view-evidence.md](live-view-evidence.md).
+
 ## Historical session timing (Mini Evo session 156)
 
-From a decoded Windows HCI log (`captures/handle_split.txt`, UTF-16 LE):
+From a decoded Windows HCI log (`captures/analysis/traces/handle_split_excerpt.txt`, sanitized excerpt):
 
 ```
 t=125.73 s   phone → cam: op=(0x80,0x15)  payload=[17×0x00]   LIVE_VIEW_PREPARE
@@ -121,7 +124,7 @@ Payload (frame[6:1026]): 1020 bytes
                   typical size ~1000 bytes at 160×106 px, low quality
 ```
 
-Confirmed from btsnoop decode (`captures/handle_split.txt`, session 156 — Mini
+Confirmed from btsnoop decode (`captures/analysis/traces/handle_split_excerpt.txt`, session 156 — Mini
 Evo): `payload[0:8]` = `00 01  00 03 F7  FF D8 FF` — chunk idx, header, SOI.
 
 ## Reassembling the frame in bleak

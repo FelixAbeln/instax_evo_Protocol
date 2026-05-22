@@ -13,6 +13,9 @@ serves two purposes:
 Confirmed from btsnoop 2026-05-18 (Wide Evo, official Instax app) and live
 systematic scan 2026-05-19.
 
+Raw HIST flow excerpts and slot payload samples are tracked in
+[history-log-evidence.md](history-log-evidence.md).
+
 > **Not what you're looking for?** If you want the **camera-initiated QUE-button
 > bulk image download** — where the user presses QUE on the camera body and the
 > phone pulls every queued JPEG — that flow uses `(0x84,xx)` only as a length
@@ -140,23 +143,33 @@ byte position (always an **odd** number) within the 44-byte record.
 On current Film=1 firmware, `rec[0][1]` should be treated as the global total
 only. The Film=1 per-lens bytes are shifted and do not directly use byte 1.
 
-## Film mode and lens effect names
+## Film/Lens names by model
 
-The 10 lens effect names are **identical across all 10 film modes** — lens
-effect #1 is always "Normal" regardless of which film mode is active.
+User-facing Film Effect, Lens Effect, and Film Style name tables are maintained
+in [effects-by-model.md](effects-by-model.md).
 
-| Film # | Film mode name (`reg 0x17`) | | Lens # | Lens effect name (`reg 0x1b`) |
-|--------|----------------------------|-|--------|-------------------------------|
-| 1 | Normal | | 1 | Normal |
-| 2 | Vivid | | 2 | Light Leak |
-| 3 | Warm | | 3 | Light Prism |
-| 4 | Sky Blue | | 4 | Vignette |
-| 5 | Light Green | | 5 | Soft Glow |
-| 6 | Magenta | | 6 | Double Ex. |
-| 7 | Sepia | | 7 | Color Shift |
-| 8 | Monochrome | | 8 | Monochrome Blur |
-| 9 | Amber | | 9 | Color Gradient |
-| 10 | Summer | | 10 | Beam Flare |
+This page keeps the HIST wire format and byte-position mapping only.
+
+## Where to read and write Film/Lens/Style fields
+
+This section keeps the wire-level source-of-truth for where each field family
+is read and written. Use [effects-by-model.md](effects-by-model.md) for the
+model-specific names tied to these IDs.
+
+| Field family | Read path | Write path | Byte/ID location |
+|---|---|---|---|
+| Film Effect (live camera state) | `(0x80,0x11)` read reg `0x17` | `(0x80,0x11)` write reg `0x17` | one-byte value (1..10 in FI028 table) |
+| Lens Effect (live camera state) | `(0x80,0x11)` read reg `0x1B` | `(0x80,0x11)` write reg `0x1B` | one-byte value (1..10 in FI028 table) |
+| Favorite slot Lens/Film | `(0x80,0x17)` slot read response | `(0x80,0x17)` slot write payload in `0x85` bracket | profile blob `b1` lens, `b2` film |
+| Favorite slot Film Style | `(0x80,0x17)` slot read response | `(0x80,0x17)` slot write payload in `0x85` bracket | profile blob `b0` |
+| Favorite slot title | `(0x80,0x17)` slot read response tail | `(0x80,0x17)` slot write payload tail | bytes `12..14` in current captures |
+
+Notes:
+
+- Favorites writes are observed inside the `(0x85,0x00)` / `(0x85,0x01)`
+  registration bracket.
+- In current FI028 captures, Normal lens and Normal film are both encoded as
+  `0x00` in the slot profile blob.
 
 > **Note on Double Ex. (lens #6):** In Film=3 (Warm), the Double Ex. slot at
 > `rec[2][7]` never increments from a single shutter press — the effect
@@ -189,7 +202,7 @@ an unknown skip unique to Film=1.
 
 Sequence: `5 · 7 · 9 · 11 · 13 · [DE at 3] · [skip 15] · 17 · 19 · 21 · 23`.
 
-### Film=2 (Vivid)
+### Film=2
 
 Clean consecutive odd-byte sequence 1–19 within `rec[1]` with **no skips**.
 
@@ -197,7 +210,7 @@ Clean consecutive odd-byte sequence 1–19 within `rec[1]` with **no skips**.
 |---|---|
 | #01–#10 | 1 · 3 · 5 · 7 · 9 · 11 · 13 · 15 · 17 · 19 |
 
-### Film=3 (Warm)
+### Film=3
 
 Spans `rec[1]` (bytes 41, 43) and `rec[2]` (bytes 1–15). The DE slot at
 `rec[2][7]` is special: it requires two sequential app presses to complete
@@ -224,13 +237,13 @@ starting at the row/byte shown below, with no DE quirks.
 
 | Film | Start | Lens #01 … #10 byte sequence |
 |---|---|---|
-| **F4 Sky Blue** | r2·b37 | r2·b37, b39, b41, b43 → r3·b1, b3, b5, b7, b9, b11 |
-| **F5 Light Green** | r3·b33 | r3·b33, b35, b37, b39, b41, b43 → r4·b1, b3, b5, b7 |
-| **F6 Magenta** | r4·b29 | r4·b29, b31, b33, b35, b37, b39, b41, b43 → r5·b1, b3 |
-| **F7 Sepia** | r5·b25 | r5·b25, b27, b29, b31, b33, b35, b37, b39, b41, b43 |
-| **F8 Monochrome** | r6·b21 | r6·b21, b23, b25, b27, b29, b31, b33, b35, b37, b39 |
-| **F9 Amber** | r7·b17 | r7·b17, b19, b21, b23, b25, b27, b29, b31, b33, b35 |
-| **F10 Summer** | r8·b13 | r8·b13, b15, b17, b19, b21, b23, b25, b27, b29, b31 |
+| **F4** | r2·b37 | r2·b37, b39, b41, b43 → r3·b1, b3, b5, b7, b9, b11 |
+| **F5** | r3·b33 | r3·b33, b35, b37, b39, b41, b43 → r4·b1, b3, b5, b7 |
+| **F6** | r4·b29 | r4·b29, b31, b33, b35, b37, b39, b41, b43 → r5·b1, b3 |
+| **F7** | r5·b25 | r5·b25, b27, b29, b31, b33, b35, b37, b39, b41, b43 |
+| **F8** | r6·b21 | r6·b21, b23, b25, b27, b29, b31, b33, b35, b37, b39 |
+| **F9** | r7·b17 | r7·b17, b19, b21, b23, b25, b27, b29, b31, b33, b35 |
+| **F10** | r8·b13 | r8·b13, b15, b17, b19, b21, b23, b25, b27, b29, b31 |
 
 ## Structural pattern — diagonal banding
 
@@ -320,15 +333,7 @@ and fires only on completed two-press cycles. Subsequent lens positions are
 ## Python decoder
 
 ```python
-FILM_NAMES = {
-    1: "Normal", 2: "Vivid", 3: "Warm", 4: "Sky Blue", 5: "Light Green",
-    6: "Magenta", 7: "Sepia", 8: "Monochrome", 9: "Amber", 10: "Summer",
-}
-LENS_NAMES = {
-    1: "Normal", 2: "Light Leak", 3: "Light Prism", 4: "Vignette", 5: "Soft Glow",
-    6: "Double Ex.", 7: "Color Shift", 8: "Monochrome Blur", 9: "Color Gradient",
-    10: "Beam Flare",
-}
+# Name tables are model-scoped and maintained in docs/effects-by-model.md.
 
 def hist_shot_count(hist_body: bytes, film: int, lens: int) -> int:
     """Return the per-film+lens shot counter.

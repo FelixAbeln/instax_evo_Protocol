@@ -4,6 +4,9 @@
 
 ## Gen 1 — Mini Evo (FI019)
 
+Raw per-model validation traces are tracked in
+[model-quirks-evidence.md](model-quirks-evidence.md).
+
 The Mini Evo participates in the [Link protocol](link-protocol.md) for status
 queries and printing, and **does not support the `(0x88,xx)` image transfer
 protocol**. Live view works, but Gen 1 often needs a short warm-up period.

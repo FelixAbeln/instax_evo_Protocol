@@ -14,6 +14,9 @@ the separate share-button queue pull mechanism.
 Confirmed on Gen 2 (Evo Wide FI028) from btsnoop captures 2026-05-17/18 and
 live Python/bleak runs.
 
+Raw `(0x85,xx)` and `(0x88,xx)` flow excerpts are tracked in
+[image-pull-evidence.md](image-pull-evidence.md).
+
 ## DOWNLOAD_PREPARE — `(0x85,xx)`
 
 Before the camera will enter transfer mode, the phone sends a download-prepare

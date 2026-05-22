@@ -185,7 +185,7 @@ async def _evo_print(image: Path, address: Optional[str], enable_print: bool, ve
             console.print("[green]Image data sent successfully[/green] (no ejection)")
 
         # Append to print log
-        log_path = Path("captures/print-log.jsonl")
+        log_path = Path("captures/analysis/logs/print-log.jsonl")
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "t": time.time(),
@@ -531,6 +531,154 @@ async def _evo_history(
         raise typer.Exit(code=1)
     finally:
         await cam.disconnect()
+
+
+@app.command("evo-favorites-dump")
+def evo_favorites_dump(
+    address: Optional[str] = typer.Option(None, "--address", "-a", help="Device address (default: auto-scan)"),
+    max_slot: int = typer.Option(10, "--max-slot", min=1, max=10, help="Highest slot index to read"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Optional output JSON file path"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Dump favorites slot selector-01 and selector-02 surfaces."""
+    asyncio.run(_evo_favorites_dump(address, max_slot, out, verbose))
+
+
+async def _evo_favorites_dump(
+    address: Optional[str],
+    max_slot: int,
+    out: Optional[Path],
+    verbose: bool,
+):
+    cam = InstaxCamera(address=address, verbose=verbose)
+    try:
+        await cam.connect()
+        await cam.get_status()
+        rows = await cam.favorites_dump_slots(max_slot=max_slot)
+
+        table = Table(title=f"Favorites dump (slots 1..{max_slot})")
+        table.add_column("Slot", style="green")
+        table.add_column("Occ01", style="cyan")
+        table.add_column("Occ02", style="cyan")
+        table.add_column("Selector01", style="yellow")
+        table.add_column("Selector02", style="yellow")
+        for r in rows:
+            table.add_row(
+                str(r["slot"]),
+                str(r["occupied_01"]),
+                str(r["occupied_02"]),
+                r["selector_01"],
+                r["selector_02"],
+            )
+        console.print(table)
+
+        if out is not None:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "address": cam.address,
+                "model": cam.model,
+                "serial": cam.serial,
+                "max_slot": max_slot,
+                "slots": rows,
+            }
+            out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            console.print(f"Saved [bold green]{out}[/bold green]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    finally:
+        await cam.disconnect()
+
+
+@app.command("evo-favorites-write")
+def evo_favorites_write(
+    slot: int = typer.Option(..., "--slot", min=1, max=10, help="Favorites slot index"),
+    profile_blob: str = typer.Option(..., "--profile-blob", help="8-byte profile blob hex (16 hex chars)"),
+    title: str = typer.Option(..., "--title", help="3 ASCII chars"),
+    state_blob: str = typer.Option("0000000000000000000000", "--state-blob", help="11-byte state blob hex (22 hex chars)"),
+    address: Optional[str] = typer.Option(None, "--address", "-a", help="Device address (default: auto-scan)"),
+    verify_readback: bool = typer.Option(True, "--verify-readback/--no-verify-readback", help="Read slot back after write"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Write one favorites slot using the confirmed 0x85 + 0x80,17 flow."""
+    asyncio.run(
+        _evo_favorites_write(
+            slot=slot,
+            profile_blob=profile_blob,
+            title=title,
+            state_blob=state_blob,
+            address=address,
+            verify_readback=verify_readback,
+            verbose=verbose,
+        )
+    )
+
+
+async def _evo_favorites_write(
+    slot: int,
+    profile_blob: str,
+    title: str,
+    state_blob: str,
+    address: Optional[str],
+    verify_readback: bool,
+    verbose: bool,
+):
+    cam = InstaxCamera(address=address, verbose=verbose)
+    try:
+        pb = bytes.fromhex(profile_blob)
+        sb = bytes.fromhex(state_blob)
+        await cam.connect()
+        await cam.get_status()
+
+        pre1 = await cam.favorites_read_slot(slot=slot, selector=1)
+        pre2 = await cam.favorites_read_slot(slot=slot, selector=2)
+        result = await cam.favorites_write_slot(
+            slot=slot,
+            profile_blob=pb,
+            title=title,
+            state_blob=sb,
+        )
+
+        console.print(f"[green]Wrote slot {slot}[/green]")
+        console.print(f"  write_a={result['write_a']}")
+        console.print(f"  write_b={result['write_b']}")
+        console.print(f"  pre_sel1={pre1.hex()}")
+        console.print(f"  pre_sel2={pre2.hex()}")
+
+        if verify_readback:
+            post1 = await cam.favorites_read_slot(slot=slot, selector=1)
+            post2 = await cam.favorites_read_slot(slot=slot, selector=2)
+            console.print(f"  post_sel1={post1.hex()}")
+            console.print(f"  post_sel2={post2.hex()}")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    finally:
+        await cam.disconnect()
+
+
+@app.command("evo-favorites-write-default")
+def evo_favorites_write_default(
+    slot: int = typer.Option(..., "--slot", min=1, max=10, help="Favorites slot index"),
+    title: str = typer.Option("DEF", "--title", help="3 ASCII chars"),
+    address: Optional[str] = typer.Option(None, "--address", "-a", help="Device address (default: auto-scan)"),
+    verify_readback: bool = typer.Option(True, "--verify-readback/--no-verify-readback", help="Read slot back after write"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Write validated full-default favorites payload (Normal/Normal/AUTO/OFF-style state)."""
+    asyncio.run(
+        _evo_favorites_write(
+            slot=slot,
+            profile_blob="0000000032000000",
+            title=title,
+            state_blob="0000000000000000000000",
+            address=address,
+            verify_readback=verify_readback,
+            verbose=verbose,
+        )
+    )
 
 
 if __name__ == "__main__":

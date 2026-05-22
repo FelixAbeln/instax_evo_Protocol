@@ -27,6 +27,9 @@ Confirmed on Gen 2 (Evo Wide FI028), bugreport 0517b 2026-05-17: three photos
 transferred at sizes 216 035 B, 216 968 B, 213 221 B; each took ~22–23 chunks
 at 9 749 B/chunk.
 
+Raw transfer windows and payload excerpts are tracked in
+[auto-transfer-evidence.md](auto-transfer-evidence.md).
+
 ## Transfer sequence
 
 ```

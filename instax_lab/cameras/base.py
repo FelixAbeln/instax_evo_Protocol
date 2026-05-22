@@ -121,6 +121,7 @@ class BaseCameraPath:
             backend._log(
                 f"  ← (88,01)  {total_size:,} B  {num_chunks} chunks  {ts_fmt}"
             )
+            backend._log(f"  ← (88,01)  raw={meta.hex()}")
             backend._ui(
                 "transfer_meta",
                 total=total_size, chunks=num_chunks, timestamp=ts_fmt,
@@ -176,6 +177,20 @@ class BaseCameraPath:
                 "transfer_done",
                 path=str(out), size=len(jpeg_bytes), timestamp=ts_fmt,
             )
+
+            # Optional evidence block for manual comparisons:
+            # capture current favorites register payloads right after transfer.
+            if hasattr(backend, "_favorites_read_slot"):
+                backend._log("Favorites register snapshot (post-transfer):")
+                for slot in range(1, 11):
+                    try:
+                        s1 = await backend._favorites_read_slot(slot=slot, selector=1, timeout=5.0)
+                        s2 = await backend._favorites_read_slot(slot=slot, selector=2, timeout=5.0)
+                        backend._log(
+                            f"  slot {slot:02d}  sel01={s1.hex()}  sel02={s2.hex()}"
+                        )
+                    except Exception as e:
+                        backend._log(f"  slot {slot:02d}  favorites read error: {e}")
             return True
 
         except asyncio.TimeoutError:

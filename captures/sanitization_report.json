@@ -1,0 +1,11 @@
+{
+  "source": "local_files\\raw_captures",
+  "destination": "captures",
+  "counts": {
+    "copied": 60,
+    "skipped_ext": 3060,
+    "skipped_size": 33,
+    "skipped_binary": 15,
+    "failed": 0
+  }
+}
