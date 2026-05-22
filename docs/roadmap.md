@@ -4,9 +4,9 @@
 
 Capture-backed supporting material is organized in [evidence.md](evidence.md).
 
-## Open hypotheses
+## Active investigation items
 
-Things still plausible but not yet confirmed.
+Open hypotheses plus partially resolved topics that still need semantic/parity closure.
 
 ## Status snapshot (2026-05-22)
 
@@ -42,9 +42,9 @@ The recurrence of `0x32` across three independent payloads strongly suggests
 it is a single firmware-side counter being surfaced through multiple opcodes,
 but the specific quantity is still unconfirmed.
 
-### H6 — Evo Wide "Favorites" retrieve/save over Link BLE (partially resolved)
+### H6 — Favorites semantics and cross-model parity (wire path resolved)
 
-Status update: protocol path is now mapped and reproducible in this repo.
+Status update: FI028 wire path is mapped and reproducible in this repo; remaining work is semantic labeling and FI019/Gen 3 parity.
 
 Confirmed on FI028:
 - Per-slot read surface is `(0x80,0x17)` with selector `0x01` and selector
@@ -62,7 +62,7 @@ What is still open:
   (`0x00`, `0x01`, `0x02`, `0x05`) under controlled toggles.
 - Semantics of selector `0x02` bit0 vs bit2 across all style transitions.
 - Complete model parity check for FI019 favorites payload behavior
-  (`(0x80,0x17)` / `(0x85,xx)`).
+  (`(0x80,0x17)` / `(0x85,xx)`) and future Gen 3 parity once hardware is available.
   Slot count itself is now observed as 3 on Mini Evo UI.
 
 Narrow capture plan (remaining work):

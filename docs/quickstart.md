@@ -97,7 +97,15 @@ class LinkClient:
             self.client = None
 
     async def write(self, packet: bytes) -> None:
-        await self.client.write_gatt_char(WRITE_UUID, packet, response=False)
+        # Link frames larger than ~182 bytes must be split across BLE writes.
+        # Keep this conservative chunk size for WinRT stability.
+        max_write = 182
+        for i in range(0, len(packet), max_write):
+            await self.client.write_gatt_char(
+                WRITE_UUID,
+                packet[i:i + max_write],
+                response=False,
+            )
 
     async def flush_rx(self) -> None:
         while not self._rx.empty():

@@ -13,7 +13,7 @@ Raw transfer excerpts and chunk-level traces are tracked in
 ```
 Enable CCCD on notify char (70954784-...)
 op=(0x00,0x00)  []                    SUPPORT_FUNCTION_AND_VERSION_INFO (hello)
-op=(0x00,0x01)  [0x00]                IMAGE_SUPPORT_INFO → (width, height)
+op=(0x00,0x02)  [0x00]                IMAGE_SUPPORT_INFO → (width, height)
 op=(0x00,0x01)  [0x01]                → "FUJIFILM"
 op=(0x00,0x01)  [0x02]                → model ID ("FI019")
 op=(0x00,0x01)  [0x03]                → serial number
@@ -26,7 +26,7 @@ See [session-init.md](session-init.md) for the full handshake.
 ## Step 2 — Send image data
 
 ```
-op=(0x10,0x00)  [img_size: 4B BE]     PRINT_IMAGE_DOWNLOAD_START
+op=(0x10,0x00)  [0x02,0x00,0x00,0x00][img_size: 4B BE]  PRINT_IMAGE_DOWNLOAD_START
     → camera ACKs with (0x10,0x00) response
 
 for each chunk (0-based sequence number, 900 bytes each, last zero-padded):
@@ -37,7 +37,7 @@ op=(0x10,0x02)  []                    PRINT_IMAGE_DOWNLOAD_END
     → camera ACKs with (0x10,0x02)
 ```
 
-- Image size = exact JPEG byte count (no header/prefix)
+- Image size = exact JPEG byte count (the 4-byte `0x02 00 00 00` prefix is protocol header, not part of image bytes)
 - Chunks are always 904 bytes in payload: 4-byte sequence + 900 bytes of data
 - Last chunk is zero-padded to 900 bytes
 - Each chunk is ACKed before the next is sent (no pipelining)
@@ -61,7 +61,7 @@ op=(0x00,0x02)  [0x02]                PRINTER_FUNCTION_INFO → photos_left (now
 
 | Step | Payload | Total packet |
 |---|---|---|
-| DOWNLOAD_START | 4 bytes | 11 B |
+| DOWNLOAD_START | 8 bytes | 15 B |
 | DOWNLOAD_DATA chunk | 904 bytes | 911 B (BLE-fragmented across writes) |
 | DOWNLOAD_END | 0 bytes | 7 B |
 | PRINT_IMAGE | 0 bytes | 7 B |

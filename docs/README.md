@@ -3,6 +3,11 @@
 Reverse-engineered notes for the Instax camera/printer BLE protocol used by the
 Mini Evo, Evo Wide, and (assumed) Mini Evo Cinema.
 
+> This documentation describes observed and tested parts of the Instax Mini Evo
+> BLE protocol. It is not an official or complete specification. Unknown,
+> proprietary, model-specific, and firmware-dependent behavior is documented
+> where observed, but not guaranteed.
+
 This wiki is split into topical pages. The pages in this index are the current
 source of truth.
 
