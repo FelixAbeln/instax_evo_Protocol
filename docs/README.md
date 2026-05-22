@@ -43,15 +43,14 @@ After those three, jump to the per-flow page you need from the table below.
 9. [history-log.md](history-log.md) — `(0x84,xx)` HIST: shot/print log + 37×44 histogram
 10. [registers.md](registers.md) — `(0x80,11)` register table (flash, lens effect, etc.)
 11. [favorites.md](favorites.md) — confirmed FI028 favorites read/write path and remaining field-semantic gaps
-12. [favorites-evidence.md](favorites-evidence.md) — raw favorites flows and capture excerpts
-13. [effects-by-model.md](effects-by-model.md) — model-scoped Film/Lens/Style name catalogs
-14. [model-quirks.md](model-quirks.md) — Gen 1 / Gen 2 / Gen 3 differences
-15. [implementation.md](implementation.md) — Windows/bleak quirks, capture logs, local print log
-16. [evidence.md](evidence.md) — cross-topic evidence index and capture logging pattern
-17. [roadmap.md](roadmap.md) — open hypotheses, known gaps, references
-18. [todo.md](todo.md) — active near-term task list and exit criteria
-19. [glossary.md](glossary.md) — terms, abbreviations, notation
-20. [android-legacy.md](android-legacy.md) — Android profile (not used)
+12. [effects-by-model.md](effects-by-model.md) — model-scoped Film/Lens/Style name catalogs
+13. [model-quirks.md](model-quirks.md) — Gen 1 / Gen 2 / Gen 3 differences
+14. [implementation.md](implementation.md) — Windows/bleak quirks, capture logs, local print log
+15. [evidence.md](evidence.md) — cross-topic evidence index and capture logging pattern
+16. [roadmap.md](roadmap.md) — open hypotheses, known gaps, references
+17. [todo.md](todo.md) — active near-term task list and exit criteria
+18. [glossary.md](glossary.md) — terms, abbreviations, notation
+19. [android-legacy.md](android-legacy.md) — Android profile (not used)
 
 ## Cross-cutting topics
 
