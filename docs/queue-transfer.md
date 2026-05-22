@@ -24,7 +24,8 @@ Raw QUE transfer flow excerpts are tracked in
 
 ```
 1. Detect readiness          ──► CAMERA_FUNCTION_INFO[4] == 0x01  (or QUE pressed)
-2. Query queue length        ──► (0x84,0x09)  idx=0       → count at bytes[10:14]
+2. Query queue length        ──► (0x84,0x09)  idx=0 and idx=2
+                                  use max(count00, count02)
 3. For each index 0..N-1:
      a. Per-entry handshake  ──► (0x84,0x09) (0x84,0x0a) (0x84,0x0b)
      b. Prepare image stream ──► (0x80,0x15)  17×0x00
@@ -44,11 +45,30 @@ available for transfer:
 | `CAMERA_FUNCTION_INFO[4]` (= response byte 4 of `(0x00,0x02,[0x04])`) | Status poll | `0x01` → camera is in transfer-ready mode. Raised by the camera ~700 ms after the user presses QUE *or* the phone sends `(0x85,0x01)` for a single image. |
 | `CAMERA_FUNCTION_INFO[5]` (FI019 observed) | Status poll | On Mini Evo probes, behaves like a count-like byte that increments with additional Share-queued images. Treat as heuristic only; `(0x84,0x09)` remains authoritative for exact count. |
 | `(0x85,0x00)` transfer state | Send packet, parse 5 B reply | 5-byte state vector. Reply seen `00 00 ff 00 00` when no transfer is in progress; values change once QUE is pressed (see [image-pull.md](image-pull.md)). |
-| `(0x84,0x09)` with `idx=0` | One-shot query | `bytes[10:14]` (4 B BE) = number of entries currently in the queue. `0` if empty. |
+| `(0x84,0x09)` with `idx=0` and `idx=2` | One-shot query | `bytes[10:14]` (4 B BE) carries a queue-like count on FI028/FI019 captures. In current FI028 Share-path captures, idx `0x02` is often populated while idx `0x00` may remain zero. Probe both and use the larger value. |
 
 Most reliable: poll `CAMERA_FUNCTION_INFO[4]` at ~1 s cadence (the same
 poll loop already used for Share-button pulls). When it flips to `0x01`,
-issue `(0x84,0x09,[0x00])`; if `count > 0` start the per-entry pull loop.
+issue `(0x84,0x09,[0x00])` and `(0x84,0x09,[0x02])`; if either count is
+greater than zero, start the per-entry pull loop.
+
+Current evidence gap: no FI028 capture in this repo yet shows `(0x84,0x09)`
+count greater than `1` in Share-path polling windows, so multi-item queue
+semantics are still provisional.
+
+Archive finding (Phone Link bugreports, 2026-05-17/18): during sessions with
+confirmed `(0x88,xx)` pulls, `(0x84,0x09)` is often absent or remains low,
+while `CAMERA_FUNCTION_INFO` (`(0x00,0x02)` sub `0x04`) shows profile-specific
+state transitions (examples: `...0232 03->02->01->00...`, `...0350 00->01->00...`).
+This indicates the official app likely gates queue/pull UX primarily from
+sub-`0x04` state transitions, with `84,09` used as a secondary probe in some
+flows.
+
+Latest FI028 live finding (2026-05-22): profile `0b50` also carries a
+countdown-like phase byte in `sub=0x04` payload byte 13 (`b13`) during Share
+pull drain. Observed sequence `2 -> 1 -> 0` matched two successful pulls,
+while `(0x84,0x09)` stayed at `idx02=1`. Treat `0b50.b13` as provisional
+remaining-entry estimate for FI028 Share flow.
 
 ## Per-entry sequence
 

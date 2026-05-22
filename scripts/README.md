@@ -1,44 +1,60 @@
 # Scripts
 
-This folder now keeps the smaller set of scripts that are still useful as
-repeatable probes or trace-analysis helpers.
+This folder contains maintained probes and analyzers used for repeatable
+protocol work.
 
-## Maintained FI019 probes
+## Queue and transfer analysis
 
-- `fi019_test_status.py` — baseline status and support-info reads
-- `fi019_test_counters.py` — watch `InfoType 0x03` / `0x05` counters live
-- `fi019_test_liveview.py` — validate `(0x82,00/01/02)` live view
-- `fi019_test_image_transfer.py` — check the unsupported `(0x88,xx)` share path
-- `fi019_test_flash.py` — direct `(0x80,0x11)` flash/register probe
-- `fi019_test_flash_liveview.py` — flash/register probe while live view is open
-- `fi019_link_reg_probe.py` — conservative Link-profile register read/write probe
-- `test_download_photo_button_flow.py` — app-style `0x82` download flow reproducer
+- `analyze_phone_link_archives.py` - scans Phone Link bugreport archives
+  (extracted dirs + zip files) and summarizes `(00,02)`/`(84,09)`/`(88,xx)`
+  behavior per recording.
+- `watch_share_flags_live.py` - live watcher for support-info changes in poll
+  order `02,03,01,04,05`.
+- `watch_queue_increment.py` - focused queue-like byte watcher on `sub=0x04`.
+- `probe_share_no_metadata.py` - transfer probe that exercises `85/88` flow
+  while allowing custom readiness gates.
 
-## Other helpers
+## Favorites and metadata helpers
 
-The retained non-FI019 helpers are the small set still useful for recurring log
-comparison work:
+- `favorites_slot_codec.py` - decode `(80,17)` slot payloads and build write
+  payloads (includes exposure encode/decode helpers).
+- `favorites_live_slots.py` - dump favorites snapshots and diff camera-side
+  changes.
+- `decode_8801_compact.py` - decode raw `(88,01)` metadata payloads and match
+  compact-tail fields against favorites snapshots.
 
+## FI019 probes
+
+- `fi019_test_status.py`
+- `fi019_test_counters.py`
+- `fi019_test_liveview.py`
+- `fi019_test_image_transfer.py`
+- `fi019_test_flash.py`
+- `fi019_test_flash_liveview.py`
+- `fi019_link_reg_probe.py`
+- `test_download_photo_button_flow.py`
+- `fi019_common.py` (shared LinkClient + helpers)
+
+## HIST and trace utilities
+
+- `hist_watch.py`
+- `map_hist.py`
+- `map_hist_baseline.json` (local baseline store for `map_hist.py`)
 - `analyze_bugreport_trace.py`
 - `compare_trace_files.py`
-- `favorites_slot_codec.py` - decode `(80,17)` slot records and build current
-  slot-write payload pairs from observed traces (includes provisional
-  exposure decode/encode in 1/3 EV steps)
-- `favorites_live_slots.py` - connect to camera, dump all favorites slots to a
-  JSON snapshot, and diff two snapshots after camera-side changes
-- `decode_8801_compact.py` - decode raw `(88,01)` metadata payloads and match
-  compact-tail fields against a favorites snapshot
+- `compare_flow_shapes.py`
+- `sanitize_captures.py`
+- `sanitize-captures.ps1`
 
-Quick usage:
+## Archived one-off scripts
 
-- `python scripts/favorites_live_slots.py dump --address <BLE_ADDR>`
-- `python scripts/favorites_live_slots.py diff <before.json> <after.json>`
-- `python scripts/decode_8801_compact.py --raw <RAW_8801_HEX> --snapshot <favorites_snapshot.json>`
-- `python scripts/decode_8801_compact.py --log <console.txt> --snapshot <favorites_snapshot.json>`
+Capture-specific one-off scripts were moved to `scripts/archive/one_off/` to
+reduce root-folder clutter while keeping reproducibility:
 
-## Cleanup note
-
-The older one-off raw/live-view experiment runners were removed after the Gen 1
-and Gen 2 behavior split was documented. If a future investigation needs that
-kind of probing again, add a new focused script with a narrow documented goal
-instead of restoring the whole exploratory set.
+- `dump_new_log.py`
+- `dump_new_log2.py`
+- `track_status.py`
+- `parse_hist_0518b.py`
+- `parse_hist_raw.py`
+- `debug_frames.py`
+- `dump_all_frames.py`

@@ -14,7 +14,7 @@ name catalogs here.
 - "Film Effect" in this page means the shooting effect name catalog for a
   given model.
 - "Lens Effect" means the lens-effect name catalog for a given model.
-- "Film Style" means favorites/profile style names such as OFF or Cinematic.
+- "Film Style" means favorites/profile style labeling in capture metadata.
 
 Wire-level read/write paths and register details are documented in
 [history-log.md](history-log.md), [registers.md](registers.md), and
@@ -149,8 +149,9 @@ Value note (favorites profile blob byte `b4`):
 - Confirmed direct value points: `0x19 => 25`, `0x32 => 50`, `0x4b => 75`.
 - In captured Film Strip profile updates, changing only the UI degree changed
   only byte `b4` to the same numeric value.
-- Film Style mapping remains unresolved and is tracked in [favorites.md](favorites.md)
-  under open items.
+- Film Style naming/order is now treated as known for FI028 (same order as Film
+  Effect IDs). Remaining open items are selector-state transition semantics in
+  [favorites.md](favorites.md).
 
 In favorites profile blobs, your finding is confirmed so far:
 

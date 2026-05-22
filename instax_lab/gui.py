@@ -140,6 +140,9 @@ class CameraBackend:
         self._cached_film_reg: int | None = None
         self._cached_lens_reg: int | None = None
         self._reg_trace_enabled = False
+        self._hist_eval_trace_enabled = False
+        self._last_info04_flag: int | None = None
+        self._last_info04_q_like: int | None = None
         self._last_hist_window: list[list[int]] = [[0] * 11 for _ in range(11)]
         self._last_hist_global = 0
         self._use_hist_evaluate_for_adds = False
@@ -187,6 +190,32 @@ class CameraBackend:
             lifetime_prints=self._print_counter,
             unknown=unknown,
         )
+
+    def _decode_info04_state(self, payload: bytes) -> dict[str, int | str | None]:
+        """Decode CAMERA_FUNCTION_INFO (sub=0x04) into a queue state snapshot.
+
+        Archived app traces show profile-specific phase bytes near payload[12:14].
+        We treat this as a provisional queue-state estimate and keep 84,09 as
+        a secondary probe.
+        """
+        profile = payload[2:4].hex() if len(payload) >= 4 else ""
+        ready = payload[4] if len(payload) > 4 else 0
+        q_like = payload[5] if len(payload) > 5 else 0
+        phase_a = payload[12] if len(payload) > 12 else None
+        phase_b = payload[13] if len(payload) > 13 else None
+
+        remaining_est: int | None = None
+        if phase_b is not None and profile in ("0232", "0350", "035f", "0b50") and phase_b <= 20:
+            remaining_est = phase_b
+
+        return {
+            "profile": profile,
+            "ready": ready,
+            "q_like": q_like,
+            "phase_a": phase_a,
+            "phase_b": phase_b,
+            "remaining_est": remaining_est,
+        }
 
     async def _read_reg_80_11(self, reg_id: int, timeout: float = 2.0) -> int | None:
         """Read one (0x80,0x11) register value byte; returns None on failure.
@@ -420,15 +449,17 @@ class CameraBackend:
                     if v > 0:
                         self._effect_counts[film][lens] += v
                         added += v
-            self._log(
-                "EVALUATE harvest: "
-                f"G={global_total} "
-                f"known_add={known_add} added={added}"
-            )
-            self._log(f"EVALUATE cells: {self._format_effect_cells(win)}")
+            if self._hist_eval_trace_enabled:
+                self._log(
+                    "EVALUATE harvest: "
+                    f"G={global_total} "
+                    f"known_add={known_add} added={added}"
+                )
+                self._log(f"EVALUATE cells: {self._format_effect_cells(win)}")
             if unknown_add > 0:
                 self._unknown_effect_tally += unknown_add
-                self._log(f"HIST matrix residual -> unknown +{unknown_add}")
+                if self._hist_eval_trace_enabled:
+                    self._log(f"HIST matrix residual -> unknown +{unknown_add}")
         except Exception as e:
             self._log(f"Gen2 HIST harvest skipped: {e}")
         finally:
@@ -669,7 +700,20 @@ class CameraBackend:
             self._ui("status", state="error", msg="Could not connect")
             return
 
-        await self._read_status()
+        try:
+            await self._read_status()
+        except Exception as e:
+            self._log(f"Status init failed: {e}")
+            self._connected = False
+            if self._client:
+                try:
+                    await self._client.disconnect()
+                except Exception:
+                    pass
+                self._client = None
+            self._ui("status", state="error", msg="Connection dropped during init")
+            return
+
         self._ui("status", state="connected")
         asyncio.create_task(self._poll_loop())
 
@@ -915,7 +959,38 @@ class CameraBackend:
             if p4 is None:
                 await asyncio.sleep(1.0)
                 continue
-            flag = p4[4] if len(p4) > 4 else 0
+            info04 = self._decode_info04_state(p4)
+            flag = int(info04["ready"] or 0)
+            q_like = int(info04["q_like"] or 0)
+            if (
+                self._last_info04_flag is None
+                or self._last_info04_q_like is None
+                or flag != self._last_info04_flag
+                or q_like != self._last_info04_q_like
+            ):
+                phase_a = info04["phase_a"]
+                phase_b = info04["phase_b"]
+                phase_txt = "n/a"
+                if isinstance(phase_a, int) and isinstance(phase_b, int):
+                    phase_txt = f"{phase_a}/{phase_b}"
+                self._log(
+                    "INFO04 change: "
+                    f"profile={info04['profile'] or 'n/a'} "
+                    f"ready=0x{flag:02x} q_like={q_like} "
+                    f"phase={phase_txt} "
+                    f"remaining_est={info04['remaining_est'] if info04['remaining_est'] is not None else 'n/a'} "
+                    f"raw={p4.hex()}"
+                )
+                self._last_info04_flag = flag
+                self._last_info04_q_like = q_like
+                self._ui(
+                    "queue_status",
+                    count=None,
+                    info04_profile=info04["profile"],
+                    info04_ready=flag,
+                    info04_q_like=q_like,
+                    info04_remaining=info04["remaining_est"],
+                )
             poll_n += 1
 
             # Keep a stable cache of currently selected Film/Lens settings.
@@ -962,10 +1037,11 @@ class CameraBackend:
                                 delta = max(cnt - prev, 1)
                                 self._pending_hist_shots += delta
                                 self._last_shot_change_ts = time.time()
-                                self._log(
-                                    f"Shot +{delta} queued for HIST evaluate "
-                                    f"(pending={self._pending_hist_shots})"
-                                )
+                                if self._hist_eval_trace_enabled:
+                                    self._log(
+                                        f"Shot +{delta} queued for HIST evaluate "
+                                        f"(pending={self._pending_hist_shots})"
+                                    )
 
                         self._ui("shot_counter", count=cnt)
             except asyncio.TimeoutError:
@@ -989,14 +1065,12 @@ class CameraBackend:
                 self._last_hist_harvest_ts = time.time()
                 if added > 0:
                     self._pending_hist_shots = max(self._pending_hist_shots - added, 0)
-                    self._log(
-                        f"HIST evaluate harvest: +{added} "
-                        f"(pending={self._pending_hist_shots})"
-                    )
+                    if self._hist_eval_trace_enabled:
+                        self._log(
+                            f"HIST evaluate harvest: +{added} "
+                            f"(pending={self._pending_hist_shots})"
+                        )
                     self._emit_tally_state()
-                else:
-                    # Keep pending; next cycle will retry.
-                    self._log("HIST evaluate harvest: no new window yet")
 
             # Refresh print-history counter every ~10 poll cycles.
             if poll_n % 10 == 0:
@@ -1034,6 +1108,12 @@ class CameraBackend:
                 if ok:
                     pulled += 1
                     self._log(f"[{pulled} image(s) pulled — checking for more]")
+                    # Re-sample queue depth right after a successful pull to
+                    # track multi-item drain behavior across idx=00/02.
+                    try:
+                        await self._check_queue_status()
+                    except Exception:
+                        pass
                     await asyncio.sleep(1.5)
                     continue
                 else:
@@ -1701,9 +1781,10 @@ class CameraBackend:
           (84,00) HIST_INIT              → 13 B response
           (84,01) HIST_SCHED  00000000   → 9 B response
           (84,02) HIST_COMMIT            → 1 B response
-          (84,09) HIST_LIST_REQ slot=02  → 14 B; bytes[10:14] = pending count
+                    (84,09) HIST_LIST_REQ idx=00/02 → 14 B; bytes[10:14] = pending count
 
-        Slot 02 = download queue (photos shared from camera but not yet pulled).
+                Some sessions report queue count on idx=00, others on idx=02.
+                We probe both and use the maximum to avoid false zero reads.
         """
         if not self._connected:
             return
@@ -1733,19 +1814,67 @@ class CameraBackend:
             except asyncio.TimeoutError:
                 pass
 
-            await self._write(make_packet(0x84, 0x09, b"\x02"))
+            info04_profile = ""
+            info04_ready = None
+            info04_q_like = None
+            info04_remaining = None
+            info04_raw = ""
             try:
-                _, _, p = await self._recv_frame(timeout=3.0)
-            except asyncio.TimeoutError:
-                self._log("Queue check: no response to HIST_LIST_REQ")
-                return
+                p4 = await self._read_support_info(0x04, timeout=2.0)
+                if p4 is not None:
+                    info04_raw = p4.hex()
+                    info04 = self._decode_info04_state(p4)
+                    info04_profile = str(info04["profile"] or "")
+                    info04_ready = int(info04["ready"] or 0)
+                    info04_q_like = int(info04["q_like"] or 0)
+                    info04_remaining = info04["remaining_est"]
+            except Exception:
+                pass
 
-            if len(p) >= 14:
-                count = struct.unpack_from(">I", p, 10)[0]
-                self._log(f"Queue status: {count} image(s) pending download")
-                self._ui("queue_status", count=count)
+            counts: list[tuple[int, int, str]] = []
+            short_responses: list[tuple[int, str]] = []
+            for idx in (0x00, 0x02):
+                await self._write(make_packet(0x84, 0x09, bytes([idx])))
+                try:
+                    _, _, p = await self._recv_frame(timeout=3.0)
+                except asyncio.TimeoutError:
+                    continue
+
+                if len(p) >= 14:
+                    counts.append((idx, struct.unpack_from(">I", p, 10)[0], p.hex()))
+                elif len(p) == 1:
+                    short_responses.append((idx, p.hex()))
+
+            if counts:
+                best_idx, count, raw = max(counts, key=lambda t: t[1])
+                detail = ", ".join(
+                    f"idx=0x{idx:02x}:{c}" for idx, c, _ in sorted(counts, key=lambda t: t[0])
+                )
+                self._log(
+                    f"Queue status: hist_probe={count} "
+                    f"(counts {detail}; selected idx=0x{best_idx:02x} raw={raw}; "
+                    f"info04_profile={info04_profile or 'n/a'} "
+                    f"info04_ready={f'0x{info04_ready:02x}' if isinstance(info04_ready, int) else 'n/a'} "
+                    f"info04_q_like={info04_q_like if info04_q_like is not None else 'n/a'} "
+                    f"info04_remaining={info04_remaining if info04_remaining is not None else 'n/a'} "
+                    f"info04_raw={info04_raw})"
+                )
+                self._ui(
+                    "queue_status",
+                    count=count,
+                    info04_profile=info04_profile,
+                    info04_ready=info04_ready,
+                    info04_q_like=info04_q_like,
+                    info04_remaining=info04_remaining,
+                )
+            elif short_responses:
+                s = ", ".join(f"idx=0x{idx:02x}:{raw}" for idx, raw in short_responses)
+                self._log(
+                    f"Queue check: short HIST_LIST_REQ response(s) {s} "
+                    "(count unavailable on this path)"
+                )
             else:
-                self._log(f"Queue check: unexpected response {p.hex()}")
+                self._log("Queue check: no usable response to HIST_LIST_REQ")
         finally:
             self._ble_busy = False
 
@@ -2201,6 +2330,7 @@ class InstaxApp:
             ("battery_pct",   "Battery"),
             ("photos_left",   "Photos left"),
             ("queue_pending", "Queue pending"),
+            ("queue_state",   "Queue state"),
             ("lifetime_shots", "Lifetime shots"),
             ("tally_shots",    "Tallied shots"),
             ("unknown_shots",  "Unknown shots"),
@@ -2485,8 +2615,24 @@ class InstaxApp:
             self._show_thumb(msg["path"])
 
         elif kind == "queue_status":
-            count = msg.get("count", 0)
-            self._info_vars["queue_pending"].set(str(count) if count else "0")
+            count = msg.get("count")
+            remaining = msg.get("info04_remaining")
+            profile = msg.get("info04_profile")
+            ready = msg.get("info04_ready")
+            q_like = msg.get("info04_q_like")
+
+            if remaining is not None:
+                self._info_vars["queue_pending"].set(str(remaining))
+            elif count is not None:
+                self._info_vars["queue_pending"].set(str(count) if count else "0")
+
+            if profile is not None or ready is not None or q_like is not None:
+                ready_txt = f"0x{ready:02x}" if isinstance(ready, int) else "n/a"
+                q_txt = str(q_like) if q_like is not None else "n/a"
+                p_txt = str(profile) if profile else "n/a"
+                self._info_vars["queue_state"].set(
+                    f"{p_txt} r={ready_txt} q={q_txt}"
+                )
 
         elif kind == "liveview_frame":
             self._update_liveview(msg["data"])

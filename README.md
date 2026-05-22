@@ -106,6 +106,6 @@ repo no longer presents them as maintained workflows.
 - FI019 `(0x88,xx)` share-button pull still disconnects
 - Some non-flash registers in the `0x80,0x11` startup sweep remain only partly
   mapped
-- FI028 favorites semantic mapping is still partial: selector-`0x02` byte `4`
-  state (`0x00/0x01/0x05`) is confirmed as the only moving state byte, but
-  exact UI-name mapping for all Film Style values is still open
+- FI028 favorites selector-state semantics are still partial: selector-`0x02`
+  byte `4` transition behavior (`0x00/0x01/0x02/0x05`) and bit-level meaning
+  are not fully mapped yet
