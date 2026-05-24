@@ -159,9 +159,41 @@ In favorites profile blobs, your finding is confirmed so far:
 
 ## FI019 (Instax Mini Evo)
 
-No model-specific style/effect name table has been fully confirmed in this
-repository yet. Add a dedicated section when FI019 UI/manual-backed mapping is
-captured.
+User-provided FI019 effect catalog (Mini Evo):
+
+### Lens Effect IDs
+
+| ID | Lens Effect name |
+|---|---|
+| 1 | Normal |
+| 2 | Vignette |
+| 3 | Soft Focus |
+| 4 | Blur |
+| 5 | Fisheye |
+| 6 | Color Shift |
+| 7 | Light Leak |
+| 8 | Mirror |
+| 9 | Double Exposure |
+| 10 | Half Frame |
+
+### Film Effect IDs
+
+| ID | Film Effect name |
+|---|---|
+| 1 | Normal |
+| 2 | Vivid |
+| 3 | Pale |
+| 4 | Canvas |
+| 5 | Monochrome |
+| 6 | Sepia |
+| 7 | Yellow |
+| 8 | Red |
+| 9 | Blue |
+| 10 | Retro |
+
+### Film Types
+
+- No separate film-type catalog has been found on this FI019 camera so far.
 
 Observed operational note:
 
