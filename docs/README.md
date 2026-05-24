@@ -44,18 +44,20 @@ After those three, jump to the per-flow page you need from the table below.
 5. [live-view.md](live-view.md) — `(0x82,xx)` viewfinder stream
 6. [auto-transfer.md](auto-transfer.md) — `(0x82,10/20/21/22)` post-shutter image pull
 7. [image-pull.md](image-pull.md) — `(0x85,xx)` + `(0x88,xx)` on-demand share-button pull
-8. [queue-transfer.md](queue-transfer.md) — QUE-button bulk queue download (`(0x84,xx)` + `(0x80,15)` + `(0x82,xx)`)
-9. [history-log.md](history-log.md) — `(0x84,xx)` HIST: shot/print log + 37×44 histogram
-10. [registers.md](registers.md) — `(0x80,11)` register table (flash, lens effect, etc.)
-11. [favorites.md](favorites.md) — confirmed FI028 favorites read/write path and remaining field-semantic gaps
-12. [effects-by-model.md](effects-by-model.md) — model-scoped Film/Lens/Style name catalogs
-13. [model-quirks.md](model-quirks.md) — Gen 1 / Gen 2 / Gen 3 differences
-14. [implementation.md](implementation.md) — Windows/bleak quirks, capture logs, local print log
-15. [evidence.md](evidence.md) — cross-topic evidence index and capture logging pattern
-16. [roadmap.md](roadmap.md) — open hypotheses, known gaps, references
-17. [todo.md](todo.md) — active near-term task list and exit criteria
-18. [glossary.md](glossary.md) — terms, abbreviations, notation
-19. [android-legacy.md](android-legacy.md) — Android profile (not used)
+8. [share-pull-flow-hypotheses.md](share-pull-flow-hypotheses.md) — mutation matrix for share-pull disconnect analysis
+9. [queue-transfer.md](queue-transfer.md) — QUE-button bulk queue download (`(0x84,xx)` + `(0x80,15)` + `(0x82,xx)`)
+10. [history-log.md](history-log.md) — `(0x84,xx)` HIST: shot/print log + 37×44 histogram
+11. [registers.md](registers.md) — `(0x80,11)` register table (flash, lens effect, etc.)
+12. [favorites.md](favorites.md) — confirmed FI028 favorites read/write path and remaining field-semantic gaps
+13. [effects-by-model.md](effects-by-model.md) — model-scoped Film/Lens/Style name catalogs
+14. [model-quirks.md](model-quirks.md) — Gen 1 / Gen 2 / Gen 3 differences
+15. [gen1-evolution-hypotheses.md](gen1-evolution-hypotheses.md) — Gen 1 failure model from the validated Gen 2 flow
+16. [implementation.md](implementation.md) — Windows/bleak quirks, capture logs, local print log
+17. [evidence.md](evidence.md) — cross-topic evidence index and capture logging pattern
+18. [roadmap.md](roadmap.md) — open hypotheses, known gaps, references
+19. [todo.md](todo.md) — active near-term task list and exit criteria
+20. [glossary.md](glossary.md) — terms, abbreviations, notation
+21. [android-legacy.md](android-legacy.md) — Android profile (not used)
 
 ## Cross-cutting topics
 

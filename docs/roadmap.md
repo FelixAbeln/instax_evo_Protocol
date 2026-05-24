@@ -122,6 +122,23 @@ not change consistently. Open whether Gen 1 expects a different `param` byte,
 a different register, or requires the change be staged through a higher-level
 opcode.
 
+### H8 — Gen 1 failures as protocol-evolution mismatch
+
+When fresh FI019 capture is unavailable, treat FI028 as the stable baseline and
+model FI019 failures as capability and state-machine divergence rather than
+transport noise.
+
+Working hypotheses:
+- `(0x88,xx)` is Gen 2+ feature family; FI019 disconnect on `(0x88,00)` is
+  likely an unsupported or hard-gated path.
+- FI019 `0x82` receive requires stricter mode ordering (live-view stop before
+  `(0x82,10/20/21/22)`).
+- FI019 flash register writes may use a weaker ACK contract, so readback/state
+  confirmation is safer than ACK-only success criteria.
+
+See [gen1-evolution-hypotheses.md](gen1-evolution-hypotheses.md) for the full
+failure map and decision rules.
+
 ## References
 
 

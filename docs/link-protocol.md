@@ -77,13 +77,13 @@ cross-referenced with live Gen 2 Evo Wide HCI captures.
 | 0x80 | 0x10 | *(Evo-specific session register)* | **Required for live HIST tracking.** P→C `[0x00]`; C→P 10B `[00 00 02 00 03 00 00 00 00 00]`. See [session-init.md](session-init.md). |
 | 0x80 | 0x11 | *(register read/write)* | See [registers.md](registers.md). |
 | 0x80 | 0x15 | `LIVE_VIEW_PREPARE` | Seen in queue/history image flows and some older live-view sessions. Do not treat it as a blanket prerequisite for current live-view control. See [live-view.md](live-view.md). |
-| 0x82 | 0x00 | `LIVE_VIEW_START` | Open live-view session, slot index byte. |
-| 0x82 | 0x01 | `LIVE_VIEW_FRAME` | Pull one JPEG frame. See [live-view.md](live-view.md). |
-| 0x82 | 0x02 | `LIVE_VIEW_END` | Close live-view session. |
-| 0x82 | 0x10 | `IMG_HIST_QUERY` | Begin the `0x82` picture receive flow. On FI028 this is the post-shutter transfer query. On FI019 it also works after the app-style live-view stop path, but not as a standalone command during active live view. See [auto-transfer.md](auto-transfer.md). |
-| 0x82 | 0x20 | `IMG_HIST_POLL` | Poll until camera-encoded JPEG is ready. |
-| 0x82 | 0x21 | `IMG_HIST_CHUNK` | Request / receive one chunk. |
-| 0x82 | 0x22 | `IMG_HIST_END` | Close auto-transfer session. |
+| 0x82 | 0x00 | `IMAGE_STREAM_START` *(legacy: LIVE_VIEW_START)* | Open `0x82` stream session, slot index byte. Slot/context determines mode (live view vs history/transfer fetch). |
+| 0x82 | 0x01 | `IMAGE_STREAM_PULL` *(legacy: LIVE_VIEW_FRAME)* | Pull next JPEG payload in the current `0x82` stream mode. See [live-view.md](live-view.md). |
+| 0x82 | 0x02 | `IMAGE_STREAM_END` *(legacy: LIVE_VIEW_END)* | Close `0x82` stream session. |
+| 0x82 | 0x10 | `IMAGE_RECEIVE_QUERY` *(legacy: IMG_HIST_QUERY)* | Begin app receive/download query flow (`0x82,10/20/21/22`). On FI028 this is post-shutter transfer query. On FI019 it also works after app-style live-view stop path. See [auto-transfer.md](auto-transfer.md). |
+| 0x82 | 0x20 | `IMAGE_RECEIVE_POLL` *(legacy: IMG_HIST_POLL)* | Poll until camera-encoded JPEG is ready. |
+| 0x82 | 0x21 | `IMAGE_RECEIVE_CHUNK` *(legacy: IMG_HIST_CHUNK)* | Request / receive one chunk. |
+| 0x82 | 0x22 | `IMAGE_RECEIVE_END` *(legacy: IMG_HIST_END)* | Close receive/download session. |
 | 0x84 | 0x00 | `CAMERA_LOG_SUBTOTAL_START` / `HIST_INFO` | See [history-log.md](history-log.md). |
 | 0x84 | 0x01 | `CAMERA_LOG_SUBTOTAL_DATA` / `HIST_INIT` | |
 | 0x84 | 0x02 | `CAMERA_LOG_SUBTOTAL_CLEAR` / `HIST_START` | |

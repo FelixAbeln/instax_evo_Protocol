@@ -130,6 +130,7 @@ class CameraBackend:
 
         # Gen2 (FI028) effect tally model.
         # _effect_counts[film][lens] is 1-based (index 0 unused).
+        self._is_gen1_fi019 = False
         self._is_gen2_fi028 = False
         self._effect_counts: list[list[int]] = [[0] * 11 for _ in range(11)]
         self._tally_total = 0
@@ -783,6 +784,7 @@ class CameraBackend:
         model_id    = info.get("model", "")
         self._path  = get_path(model_id)
         model_u = model_id.upper()
+        self._is_gen1_fi019 = (model_u == "FI019")
         self._is_gen2_fi028 = (model_u == "FI028")
         # Initialise pull capability conservatively:
         # - FI019: hard-disable (88,xx) to avoid camera disconnect.
@@ -794,6 +796,10 @@ class CameraBackend:
             self._transfer_supported = False
         else:
             self._transfer_supported = self._path.supports_image_pull
+
+        info["supports_image_pull"] = self._path.supports_image_pull
+        info["supports_liveview"] = self._path.supports_liveview
+        info["supports_image_print"] = self._path.supports_image_print
 
         # Image dimensions (determines film format and chunk size)
         try:
@@ -1665,50 +1671,88 @@ class CameraBackend:
             return
         name = {0: "AUTO", 1: "ON", 2: "OFF"}.get(value, str(value))
         async with self._ble_op_lock:
-            if self._lv_running:
-                await self._refresh_82_liveview_window("flash change")
-            else:
-                await self._flush_rx()
             payload = bytes([0x0b, 0x02, value, 0x00, 0x00, 0x00])
-            await self._write(make_packet(0x80, 0x11, payload))
-            deadline = self._loop.time() + 4.0
-            skipped_frames: list[str] = []
-            flash_payload: bytes | None = None
-            while True:
-                left = deadline - self._loop.time()
-                if left <= 0:
-                    break
-                try:
-                    op1, op2, reply = await self._recv_frame(timeout=min(left, 1.0))
-                except asyncio.TimeoutError:
-                    continue
-                if op1 == 0x80 and op2 == 0x11:
-                    flash_payload = reply
-                    break
-                if len(skipped_frames) < 6:
-                    skipped_frames.append(f"({op1:#04x},{op2:#04x}) {reply[:8].hex()}")
+            attempts = 2 if self._is_gen1_fi019 else 1
+            last_payload: bytes | None = None
 
-            if flash_payload is None:
-                if skipped_frames:
-                    self._log(
-                        "Flash set: no 0x80,0x11 response"
-                        f" after seeing {'; '.join(skipped_frames)}"
-                    )
+            for attempt in range(1, attempts + 1):
+                if self._lv_running:
+                    await self._refresh_82_liveview_window("flash change")
                 else:
-                    self._log("Flash set: no 0x80,0x11 response")
-                return
+                    await self._flush_rx()
 
-            if flash_payload.startswith(b"\x00\x0b"):
-                self._log(f"Flash: {name} ACK {flash_payload.hex()}")
-                return
+                await self._write(make_packet(0x80, 0x11, payload))
+                deadline = self._loop.time() + 4.0
+                skipped_frames: list[str] = []
+                flash_payload: bytes | None = None
+                while True:
+                    left = deadline - self._loop.time()
+                    if left <= 0:
+                        break
+                    try:
+                        op1, op2, reply = await self._recv_frame(timeout=min(left, 1.0))
+                    except asyncio.TimeoutError:
+                        continue
+                    if op1 == 0x80 and op2 == 0x11:
+                        flash_payload = reply
+                        last_payload = reply
+                        break
+                    if len(skipped_frames) < 6:
+                        skipped_frames.append(f"({op1:#04x},{op2:#04x}) {reply[:8].hex()}")
 
-            self._log(
-                f"Flash: {name} non-ACK {flash_payload.hex()}"
-                + (
-                    f" after {'; '.join(skipped_frames)}"
-                    if skipped_frames else ""
+                if flash_payload is not None:
+                    if flash_payload.startswith(b"\x00\x0b"):
+                        self._log(f"Flash: {name} ACK {flash_payload.hex()}")
+                        self._ui("camera_info", flash_mode=value)
+                        return
+                    if len(flash_payload) >= 3 and flash_payload[1] == 0x0B and flash_payload[2] == value:
+                        self._log(
+                            f"Flash: {name} accepted (echo) {flash_payload.hex()}"
+                        )
+                        self._ui("camera_info", flash_mode=value)
+                        return
+
+                readback = await self._read_reg_80_11(0x0B, timeout=2.0)
+                if readback == value:
+                    detail = flash_payload.hex() if flash_payload is not None else "none"
+                    self._log(
+                        f"Flash: {name} applied (readback-confirmed, response={detail})"
+                    )
+                    self._ui("camera_info", flash_mode=value)
+                    return
+
+                if isinstance(readback, int) and readback in (0, 1, 2):
+                    self._ui("camera_info", flash_mode=readback)
+
+                if attempt < attempts:
+                    self._log(
+                        f"Flash: {name} not confirmed on attempt {attempt}/{attempts}; retrying"
+                    )
+                    continue
+
+                if flash_payload is None:
+                    if skipped_frames:
+                        self._log(
+                            "Flash set: no 0x80,0x11 response"
+                            f" after seeing {'; '.join(skipped_frames)}"
+                        )
+                    else:
+                        self._log("Flash set: no 0x80,0x11 response")
+                else:
+                    self._log(
+                        f"Flash: {name} non-ACK {flash_payload.hex()}"
+                        + (
+                            f" after {'; '.join(skipped_frames)}"
+                            if skipped_frames else ""
+                        )
+                    )
+
+            if last_payload is not None:
+                self._log(
+                    f"Flash: {name} failed to confirm (last response {last_payload.hex()})"
                 )
-            )
+            else:
+                self._log(f"Flash: {name} failed to confirm")
 
     async def _download_photo(self):
         """Trigger an immediate photo download via the (82,10/20/21/22) protocol."""
@@ -2551,7 +2595,18 @@ class InstaxApp:
             model = (msg.get("model") or "").upper()
             if msg.get("model"):
                 self._info_vars["model"].set(msg["model"])
-                self._set_flash_controls(True)
+                if model == "FI019":
+                    self._set_flash_controls(
+                        True,
+                        note="Gen1: flash uses readback confirmation",
+                    )
+                else:
+                    self._set_flash_controls(True)
+            if "supports_image_pull" in msg:
+                can_pull = bool(msg.get("supports_image_pull"))
+                self.btn_pull.configure(
+                    state=("normal" if (self.backend._connected and can_pull) else "disabled")
+                )
             if msg.get("serial"):  self._info_vars["serial"].set(msg["serial"])
             if bat != "?":         self._info_vars["battery_pct"].set(f"{bat}%")
             if pht != "?":         self._info_vars["photos_left"].set(str(pht))

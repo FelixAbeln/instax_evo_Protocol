@@ -14,7 +14,7 @@ Status legend: `✅` confirmed working, `⚠️` partial/conditional, `⏳` not 
 | Status poll (battery, photos left, model) | ✅ | ✅ | ⏳ Pending first hardware capture | `(00,02)` |
 | Transfer-ready flag detection | ⚠️ flag seen, transfer path still not usable | ✅ | ⏳ Pending first hardware capture | `(00,02)` `CAMERA_FUNCTION_INFO` byte[2] |
 | **Print** (phone → camera → film ejected) | ✅ | ✅ | ⏳ Pending first hardware capture | `(10,00/01/02/80)` |
-| Flash control | ❌ Direct FI019 probes and repo-app writes still unresponsive as of 2026-05-21 | ✅ Confirmed `reg 0x0B` mapping and working app flow (`0=Auto, 1=On, 2=Off`) | ⏳ Pending first hardware capture | `(80,11)` reg_id=0x0b |
+| Flash control | ⚠️ Partial: ACK still unreliable on FI019; repo app uses best-effort readback confirmation | ✅ Confirmed `reg 0x0B` mapping and working app flow (`0=Auto, 1=On, 2=Off`) | ⏳ Pending first hardware capture | `(80,11)` reg_id=0x0b |
 | Live view (pull loop) | ✅ Works with warm-up: early pulls may return short `0x02` payloads before JPEG frames begin | ✅ | ⏳ Pending first hardware capture | `(82,00/01/02)` |
 | Auto-transfer / Download Photo `(82,10/20/21/22)` | ⚠️ works only with app-style live-view stop; standalone `(82,10)` during active live view still returns `c0` | ✅ seamless LV resume after shutter close | ⏳ Pending first hardware capture | `(82,10/20/21/22)` |
 | Share-button image pull | ❌ Camera disconnects on `(88,00)` | ✅ | ⏳ Pending first hardware capture | `(88,00…0b)` |

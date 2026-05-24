@@ -85,9 +85,14 @@ Queue-depth visibility is currently model-dependent:
   `CAMERA_FUNCTION_INFO`; treat `payload[4]` as readiness only.
 - **FI019 (Gen 1):** live probes show `CAMERA_FUNCTION_INFO payload[5]` tracks
   a count-like value that increases when Share-queued images increase (example
-  observation: `... 01 02 ...` -> `... 01 03 ...` after another shared image).
+  observation progression across consecutive short runs:
+  `... 01 01 ... -> ... 01 02 ... -> ... 01 03 ... -> ... 01 04 ...`).
   This is useful as a poll signal even though `(0x88,xx)` itself is unsupported
   on FI019.
+
+In the current FI019 watch set (`sub=0x02,0x03,0x01,0x04,0x05`), this
+`sub=0x04` byte-5 progression is the only repeatable transfer-related delta;
+the other watched payloads remained stable in the same windows.
 
 Other queue signals:
 

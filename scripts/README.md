@@ -13,6 +13,10 @@ protocol work.
 - `watch_queue_increment.py` - focused queue-like byte watcher on `sub=0x04`.
 - `probe_share_no_metadata.py` - transfer probe that exercises `85/88` flow
   while allowing custom readiness gates.
+- `share_pull_mutation_probe.py` - intentionally simple share-pull probe with
+  toggles for `85` prep, `88,01` metadata, chunk count, and close behavior.
+- `share_pull_light.py` - fully standalone light share probe (no `instax_lab`
+  imports) for fast flow mutation and full TX/RX visibility.
 
 ## Favorites and metadata helpers
 

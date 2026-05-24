@@ -16,7 +16,7 @@ protocol**. Live view works, but Gen 1 often needs a short warm-up period.
 | Feature | Status | Notes |
 |---|---|---|
 | Status queries `(0x00,xx)` | ✅ Works | Battery, model, serial, photos_left all returned correctly |
-| Flash control `(0x80,0x11, reg 0x0B)` | ❌ Still unresolved in repo app | Direct probes and app writes still showed no reliable `(0x80,0x11)` ACK on 2026-05-21, even though the same register is confirmed on FI028 |
+| Flash control `(0x80,0x11, reg 0x0B)` | ⚠️ Partial / best-effort | Direct probes still show no reliable `(0x80,0x11)` ACK on 2026-05-21; repo app now treats FI019 flash as readback-confirmed best-effort instead of ACK-only success |
 | `PRINT_HISTORY_INFO` `(0x00,0x02,[0x03])` | ✅ Works | Probe-confirmed on FI019: readable (`transfers=60`, `prints=16`); increments still to validate with print/transfer event |
 | `CAMERA_HISTORY_INFO` `(0x00,0x02,[0x05])` | ✅ Works | Probe-confirmed on FI019: increments live (`84 -> 102` during 120 s shot run) |
 | `CAMERA_FUNCTION_INFO` poll | ✅ Works | Flag appears (0x01) when user presses Transfer |
@@ -25,6 +25,25 @@ protocol**. Live view works, but Gen 1 often needs a short warm-up period.
 | Live view `(0x82,xx)` | ✅ **Works (warm-up required)** | Probe-confirmed on FI019: `(0x82,00)` ACK succeeds; early `(0x82,01)` pulls may return short payload `0x02`, then valid JPEG frames follow (example run: 10 warm-up pulls then 20 valid frames). |
 | `0x82` picture receive flow `(0x82,10/20/21/22)` | ✅ Works with app-style state | During active live view, standalone `(0x82,10)` got `[0xc0]` and no image. But the app-style sequence "open live view -> pull frames -> stop live view -> `(0x82,10/20/21/22)`" returned a 28,795 B JPEG on 2026-05-21. |
 | `(0x84,xx)` log queries | ⏳ Not explored | — |
+
+### FI019 transfer-watch signal (new confirmed behavior)
+
+In current Gen 1 watcher runs (poll set `sub=0x02,0x03,0x01,0x04,0x05`), the
+only repeatable transfer-related delta is in `CAMERA_FUNCTION_INFO` (`sub=0x04`):
+
+- `payload[4]` (`ready`) remained asserted (`0x01`) throughout the observed
+  sessions.
+- `payload[5]` (`q_like`) incremented with user Transfer actions, observed as
+  `...0101... -> ...0102... -> ...0103... -> ...0104...` across consecutive
+  short watcher runs.
+- Other polled fields in the same windows stayed stable:
+  - `sub=0x02` `PRINTER_FUNCTION_INFO`
+  - `sub=0x03` `PRINT_HISTORY_INFO`
+  - `sub=0x01` `BATTERY_INFO`
+  - `sub=0x05` `CAMERA_HISTORY_INFO`
+
+Practical Gen 1 rule: when validating that Transfer queued/advanced state, use
+`sub=0x04` byte `5` progression as the reliable signal in current evidence.
 
 ### `(0x88,xx)` not supported on Gen 1
 

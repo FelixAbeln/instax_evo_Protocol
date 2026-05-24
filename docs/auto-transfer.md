@@ -1,8 +1,8 @@
-# Auto-transfer — `(0x82,10/20/21/22)`
+# Auto-transfer — `(0x82,10/20/21/22)` image receive flow
 
 ← [Wiki index](README.md)
 
-The `(0x82,0x10/0x20/0x21/0x22)` family is the app's picture-receive path.
+The `(0x82,0x10/0x20/0x21/0x22)` family is the app's image-receive path.
 What it does depends on camera state.
 
 On FI028, this is the confirmed post-shutter auto-transfer path: the camera
@@ -34,12 +34,12 @@ Raw transfer windows and payload excerpts are tracked in
 
 ```
 # ── Query / begin receive path ───────────────────────────────────────────
-phone → cam: op=(0x82,0x10)  payload=[0x00]     # IMG_HIST_QUERY
+phone → cam: op=(0x82,0x10)  payload=[0x00]     # IMAGE_RECEIVE_QUERY
 cam → phone: op=(0x82,0x10)  payload=[0x00]     # ACK
 
 # ── Poll loop (~500 ms interval) ─────────────────────────────────────────
 loop:
-  phone → cam: op=(0x82,0x20)  payload=[]        # IMG_HIST_POLL — is image ready?
+    phone → cam: op=(0x82,0x20)  payload=[]        # IMAGE_RECEIVE_POLL — is image ready?
   cam → phone: op=(0x82,0x20)  payload=[0x02]    # not ready — retry
   ... (camera takes ~4–5 s to encode the JPEG) ...
   cam → phone: op=(0x82,0x20)  payload=[0x00][0x02][total_size:4B BE][chunk_size:4B BE]
@@ -51,13 +51,13 @@ loop:
 # implicit ACK for the previous chunk. No separate ACK frame is ever sent.
 num_chunks = ceil(total_size / chunk_size)
 for chunk_idx in range(num_chunks):
-  phone → cam: op=(0x82,0x21)  payload=[chunk_idx:4B BE]                    # REQUEST
+    phone → cam: op=(0x82,0x21)  payload=[chunk_idx:4B BE]                    # IMAGE_RECEIVE_CHUNK request
   cam → phone: op=(0x82,0x21)  payload=[status:1B][chunk_idx:4B BE][jpeg…]  # RESPONSE
   # status byte is always 0x00 (OK)
   # Timing: ~188 ms round-trip per chunk at MTU=247
 
 # ── Close ────────────────────────────────────────────────────────────────
-phone → cam: op=(0x82,0x22)  payload=[]     # IMG_HIST_END
+phone → cam: op=(0x82,0x22)  payload=[]     # IMAGE_RECEIVE_END
 cam → phone: op=(0x82,0x22)  payload=[0x00] # ACK
 ```
 

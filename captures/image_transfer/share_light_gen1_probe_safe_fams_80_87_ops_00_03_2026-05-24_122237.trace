@@ -1,0 +1,148 @@
+TX 00 00 
+RX 00 00 001700010000000100
+TX 00 01 01
+RX 00 01 0001054649303139
+TX 00 01 02
+RX 00 01 00020a33333332313337363730
+# model=FI019 serial=3332137670 addr=FA:AB:BC:11:6F:D2
+TX 00 02 04
+RX 00 02 00040002012700000000
+# info04_baseline_ready=0x01 q_like=39
+TX 00 02 04
+RX 00 02 00040002012700000000
+TX 00 02 04
+RX 00 02 00040002012700000000
+TX 00 02 04
+RX 00 02 00040002012700000000
+TX 00 02 04
+RX 00 02 00040002012700000000
+TX 00 02 04
+RX 00 02 00040002012800000000
+# info04_edge ready 0x01->0x01 q_like 39->40
+# ready_flag=0x01 info04=00040002012800000000
+# probe_op1s=0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87 op2s=0x00,0x01,0x02,0x03
+# probe_family_start op1=0x80
+TX 80 00 
+RX 80 00 00
+TX 00 02 01
+RX 00 02 000103380000
+TX 00 02 02
+RX 00 02 00023000021400000000
+TX 00 02 03
+RX 00 02 00030000003c00000011
+TX 00 02 04
+RX 00 02 00040002012800000000
+TX 00 02 05
+RX 00 02 000500000079
+TX 80 01 
+RX 80 01 02
+TX 00 02 01
+RX 00 02 000103380000
+TX 00 02 02
+RX 00 02 00023000021400000000
+TX 00 02 03
+RX 00 02 00030000003c00000011
+TX 00 02 04
+RX 00 02 00040002012800000000
+TX 00 02 05
+RX 00 02 000500000079
+TX 80 02 
+# probe_80_02_error=TimeoutError:
+TX 00 02 04
+RX 80 02 d2
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x80
+# probe_family_end op1=0x80 had_error=1
+# probe_family_start op1=0x81
+TX 81 00 
+RX 81 00 0008000000000000000000000000000000000000000000000000
+TX 00 02 01
+RX 00 02 000103380000
+TX 00 02 02
+RX 00 02 00023000021400000000
+TX 00 02 03
+RX 00 02 00030000003c00000011
+TX 00 02 04
+RX 00 02 00040002012800000000
+TX 00 02 05
+RX 00 02 000500000079
+TX 81 01 
+RX 81 01 81
+TX 00 02 01
+RX 00 02 000103380000
+TX 00 02 02
+RX 00 02 00023000021400000000
+TX 00 02 03
+RX 00 02 00030000003c00000011
+TX 00 02 04
+RX 00 02 00040002012800000000
+TX 00 02 05
+RX 00 02 000500000079
+TX 81 02 
+RX 81 02 81
+TX 00 02 01
+RX 00 02 000103380000
+TX 00 02 02
+RX 00 02 00023000021400000000
+TX 00 02 03
+RX 00 02 00030000003c00000011
+TX 00 02 04
+RX 00 02 00040002012800000000
+TX 00 02 05
+RX 00 02 000500000079
+TX 81 03 
+RX 81 03 00
+TX 00 02 01
+RX 00 02 000103380000
+TX 00 02 02
+RX 00 02 00023000021400000000
+TX 00 02 03
+RX 00 02 00030000003c00000011
+TX 00 02 04
+RX 00 02 00040002012800000000
+TX 00 02 05
+RX 00 02 000500000079
+# probe_family_end op1=0x81 had_error=0
+# probe_family_start op1=0x82
+TX 82 00 
+# probe_82_00_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x82
+# probe_family_end op1=0x82 had_error=1
+# probe_family_start op1=0x83
+TX 83 00 
+# probe_83_00_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x83
+# probe_family_end op1=0x83 had_error=1
+# probe_family_start op1=0x84
+TX 84 00 
+# probe_84_00_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x84
+# probe_family_end op1=0x84 had_error=1
+# probe_family_start op1=0x85
+TX 85 00 
+# probe_85_00_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x85
+# probe_family_end op1=0x85 had_error=1
+# probe_family_start op1=0x86
+TX 86 00 
+# probe_86_00_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x86
+# probe_family_end op1=0x86 had_error=1
+# probe_family_start op1=0x87
+TX 87 00 
+# probe_87_00_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+# probe_family_stop_on_error op1=0x87
+# probe_family_end op1=0x87 had_error=1
+# probe_only_complete

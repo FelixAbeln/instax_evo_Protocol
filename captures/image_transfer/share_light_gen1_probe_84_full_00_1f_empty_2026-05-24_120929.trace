@@ -1,0 +1,164 @@
+TX 00 00 
+RX 00 00 001700010000000100
+TX 00 01 01
+RX 00 01 0001054649303139
+TX 00 01 02
+RX 00 01 00020a33333332313337363730
+# model=FI019 serial=3332137670 addr=FA:AB:BC:11:6F:D2
+TX 00 02 04
+RX 00 02 00040002011e00000000
+# info04_baseline_ready=0x01 q_like=30
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011e00000000
+TX 00 02 04
+RX 00 02 00040002011f00000000
+# info04_edge ready 0x01->0x01 q_like 30->31
+# ready_flag=0x01 info04=00040002011f00000000
+# probe_op1=0x84 op2s=0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f
+TX 84 00 
+RX 84 00 00000000940000009400000000
+TX 84 01 
+RX 84 01 00d000000000000039000000000000000000000000000000320000000100000001000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050000000000000000
+TX 84 02 
+RX 84 02 00
+TX 84 03 
+RX 84 03 00ce000000000000000000000000
+TX 84 04 
+RX 84 04 00cd00000000
+TX 84 05 
+# probe_84_05_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+TX 84 06 
+# probe_84_06_error=TimeoutError:
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=TimeoutError:
+TX 84 07 
+# probe_84_07_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 08 
+# probe_84_08_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 09 
+# probe_84_09_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 0a 
+# probe_84_0a_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 0b 
+# probe_84_0b_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 0c 
+# probe_84_0c_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 0d 
+# probe_84_0d_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 0e 
+# probe_84_0e_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 0f 
+# probe_84_0f_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 10 
+# probe_84_10_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 11 
+# probe_84_11_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 12 
+# probe_84_12_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 13 
+# probe_84_13_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 14 
+# probe_84_14_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 15 
+# probe_84_15_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 16 
+# probe_84_16_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 17 
+# probe_84_17_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 18 
+# probe_84_18_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 19 
+# probe_84_19_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 1a 
+# probe_84_1a_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 1b 
+# probe_84_1b_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 1c 
+# probe_84_1c_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 1d 
+# probe_84_1d_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 1e 
+# probe_84_1e_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+TX 84 1f 
+# probe_84_1f_error=BleakError:Not connected
+TX 00 02 04
+# probe_liveness_failed sub=0x04 error=BleakError:Not connected
+# probe_only_complete
